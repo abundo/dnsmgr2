@@ -31,12 +31,14 @@ nfpms:
   - maintainer: Anders Lowinger <anders@abundo.se>
     description: Tool to manage ISC BIND from a text records file.
     homepage: https://github.com/abundo/dnsmgr2
-    license: MIT
+    license: GPL-3.0-or-later
     formats:
       - deb
     bindir: /usr/bin
     section: net
     contents:
+      - src: LICENSE
+        dst: /usr/share/doc/dnsmgr2/copyright
       - src: examples/dnsmgr2-example.yaml
         dst: /usr/share/doc/dnsmgr2/dnsmgr2-example.yaml
       - src: examples/records-example

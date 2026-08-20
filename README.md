@@ -109,3 +109,7 @@ Edit `/etc/dnsmgr2/records`, then:
 ## Development
 
 See [DEV.md](DEV.md).
+
+## License
+
+[GPL-3.0-or-later](LICENSE). Copyright (c) 2026 Anders Löwinger.
