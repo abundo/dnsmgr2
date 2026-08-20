@@ -23,10 +23,15 @@ Writes `bin/dnsmgr2`. Install to `/usr/bin` (the Makefile runs `sudo`):
     go test ./...
     go vet ./...
 
+GitHub Actions runs `go vet`, `go test`, `make`, and a GoReleaser snapshot
+on every push to `main` and on pull requests
+(`.github/workflows/ci.yml`).
+
 ## Release
 
 Releases are built with [GoReleaser](https://goreleaser.com/) (pure Go,
-`CGO_ENABLED=0`) and published to GitHub when a `v*` tag is pushed:
+`CGO_ENABLED=0`) and published to GitHub when a `v*` tag is pushed
+(`.github/workflows/release.yml`). Tests must pass first.
 
     git tag -a v0.1.0 -m "v0.1.0"
     git push origin v0.1.0

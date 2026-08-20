@@ -1,5 +1,7 @@
 # dnsmgr2
 
+[![ci](https://github.com/abundo/dnsmgr2/actions/workflows/ci.yml/badge.svg)](https://github.com/abundo/dnsmgr2/actions/workflows/ci.yml)
+
 Tool to manage ISC BIND from a text records file.
 
 It writes forward and reverse zone files, keeps SOA serial numbers in a

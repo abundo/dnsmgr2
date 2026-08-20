@@ -1,53 +1,63 @@
 name: ci
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+    push:
+        branches: [main]
+    pull_request:
+
+concurrency:
+    group: ci-${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
 
 permissions:
-  contents: read
+    contents: read
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+    test:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v7
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
+            - name: Set up Go
+              uses: actions/setup-go@v7
+              with:
+                  go-version-file: go.mod
 
-      - name: Test
-        run: go test ./...
+            - name: Vet
+              run: go vet ./...
 
-  goreleaser:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
+            - name: Test
+              run: go test ./...
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
+            - name: Build
+              run: make
 
-      - name: Check GoReleaser config
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: check
+    goreleaser:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v7
+              with:
+                  fetch-depth: 0
 
-      - name: Snapshot release
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --snapshot --clean --skip=publish
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            - name: Set up Go
+              uses: actions/setup-go@v7
+              with:
+                  go-version-file: go.mod
+
+            - name: Check GoReleaser config
+              uses: goreleaser/goreleaser-action@v7
+              with:
+                  distribution: goreleaser
+                  version: "~> v2"
+                  args: check
+
+            - name: Snapshot release
+              uses: goreleaser/goreleaser-action@v7
+              with:
+                  distribution: goreleaser
+                  version: "~> v2"
+                  args: release --snapshot --clean --skip=publish
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
