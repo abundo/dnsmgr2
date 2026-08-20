@@ -1,0 +1,76 @@
+---
+default_domain: example.com
+dbfile: /var/lib/dnsmgr2/dnsmgr2.sqlite
+
+#----------------------------------------------------------------------
+# List of sources, where to read data
+#----------------------------------------------------------------------
+
+sources:
+    - type: file
+      name: /etc/dnsmgr2/records
+
+#----------------------------------------------------------------------
+# List of Destinations, where to write data
+#----------------------------------------------------------------------
+
+destinations:
+    - type: dns_isc_bind
+      name: isc_bind_ubuntu
+
+#----------------------------------------------------------------------
+# DNS definitions
+#----------------------------------------------------------------------
+dns:
+    host_templates:
+        # ISC BIND configuration template for Ubuntu
+        isc_bind_ubuntu:
+            type: isc_bind
+            configdir: /etc/bind
+            includefile: named.conf.dnsmgr2
+            zonesdir: /var/lib/bind
+            zonesfile: "{zone}"
+            tmpdir: /var/lib/dnsmgr2
+            cmd_reload_all: "sudo rndc reload"
+            cmd_reload_zone: "sudo rndc reload {zone}"
+            cmd_restart: "systemctl restart named.service"
+
+    # Templates for SOA record
+    soa_templates:
+        default_soa:
+            mname: ns1.example.com.
+            rname: support@example.com.
+            # date_serial: YYYYMMDDnn (2018061500)
+            serial_format: date_serial
+            refresh: 36000
+            retry: 3600
+            expire: 604800
+            minimum: 900
+
+    zone_templates:
+        default_dns:
+            soa: default_soa
+            default_ttl: 900
+            dnssec_policy: dnssec-policy
+            ns:
+                - { name: "@", type: "NS", value: "ns1.example.com." }
+                - { name: "@", type: "NS", value: "ns2.example.com." }
+
+#----------------------------------------------------------------------
+# Main entry for config
+#----------------------------------------------------------------------
+
+dnsmgr2:
+    - host_dns_template: isc_bind_ubuntu
+      zones:
+          - name: example.com
+            type: forward
+            dns_template: default_dns
+
+          - name: 192.168.0.0/16
+            type: reverse4
+            dns_template: default_dns
+
+          - name: 2001:db8:1000::/64
+            type: reverse6
+            dns_template: default_dns

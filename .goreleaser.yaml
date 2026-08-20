@@ -1,0 +1,64 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: dnsmgr2
+
+builds:
+  - id: dnsmgr2
+    main: ./cmd/dnsmgr2
+    binary: dnsmgr2
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.CommitDate}}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - examples/*
+
+nfpms:
+  - maintainer: Anders Lowinger <anders@abundo.se>
+    description: Tool to manage ISC BIND from a text records file.
+    homepage: https://github.com/abundo/dnsmgr2
+    license: MIT
+    formats:
+      - deb
+    bindir: /usr/bin
+    section: net
+    contents:
+      - src: examples/dnsmgr2-example.yaml
+        dst: /usr/share/doc/dnsmgr2/dnsmgr2-example.yaml
+      - src: examples/records-example
+        dst: /usr/share/doc/dnsmgr2/records-example
+      - dst: /etc/dnsmgr2
+        type: dir
+      - dst: /var/lib/dnsmgr2
+        type: dir
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+
+changelog:
+  sort: asc
+  use: git
+  filters:
+    exclude:
+      - "^Merge pull request"
+      - "^Merge branch"
+
+release:
+  github:
+    owner: abundo
+    name: dnsmgr2
+  name_template: "v{{ .Version }}"
