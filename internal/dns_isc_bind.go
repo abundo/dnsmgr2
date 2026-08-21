@@ -126,24 +126,30 @@ func (dns *DNSManager) UpdateZone(host *ConfigDNS_HostTemplate, zone *Zone, newS
 		} else {
 			TTL = ""
 		}
-		slog.Debug(format, record.Name, TTL, record.Type, record.Value)
+		slog.Debug("zone record", "name", record.Name, "ttl", TTL, "type", record.Type, "value", record.Value)
 		fmt.Fprintf(file, format, record.Name, TTL, record.Type, record.Value)
 	}
 
-	file.Close()
-
-	// Check if zone is valid
-	cmd := exec.Command("named-checkzone", zone.Name, zone.TmpFile)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		slog.Error("named-checkzone", "CombinedOuput", err)
+	if err := file.Close(); err != nil {
 		return err
 	}
-	if cmd.ProcessState.ExitCode() > 0 {
-		fmt.Printf("named-checkzone error: %s\n", out)
-	} else {
-		slog.Debug("named-checkzone validation ok")
+
+	return namedCheckZone(zone.Name, zone.TmpFile)
+}
+
+func namedCheckZone(zonename, filename string) error {
+	cmd := exec.Command("named-checkzone", zonename, filename)
+	out, err := cmd.CombinedOutput()
+	output := strings.TrimSpace(string(out))
+	if err != nil {
+		if output != "" {
+			slog.Error("named-checkzone", "zone", zonename, "file", filename, "err", err, "output", output)
+			return fmt.Errorf("named-checkzone %s %s: %w\n%s", zonename, filename, err, output)
+		}
+		slog.Error("named-checkzone", "zone", zonename, "file", filename, "err", err)
+		return fmt.Errorf("named-checkzone %s %s: %w", zonename, filename, err)
 	}
+	slog.Debug("named-checkzone validation ok", "zone", zonename)
 	return nil
 }
 
