@@ -1,5 +1,7 @@
 $DOMAIN example.com
 
+ns1                                     A       192.0.2.53
+ns2                                     A       192.0.2.54
 test                                    A       192.0.2.4
 mail                                    A       192.0.2.10
 

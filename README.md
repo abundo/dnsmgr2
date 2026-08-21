@@ -73,6 +73,8 @@ or `;` are ignored.
 
     $DOMAIN example.com
 
+    ns1                                     A       192.0.2.53
+    ns2                                     A       192.0.2.54
     test                                    A       192.0.2.4
     mail                                    A       192.0.2.10
     @                                       MX      10 mail
@@ -89,6 +91,10 @@ A line is `name [ttl] type value`. Optional TTL sits between the name and
 the type. Supported types include A, AAAA, MX, TXT and TLSA. A and AAAA
 records also get a PTR in a matching reverse zone unless you add
 `; reverse=0`.
+
+If a nameserver in the zone template is inside the zone (for example
+`ns1.example.com` in `example.com`), it must have an A or AAAA record.
+BIND's `named-checkzone` rejects the zone otherwise.
 
 ## Commands
 
