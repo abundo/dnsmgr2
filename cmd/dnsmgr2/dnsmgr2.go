@@ -15,7 +15,7 @@ var version = "dev"
 func main() {
 	boa.RegisterConfigFormat(".yaml", yaml.Unmarshal)
 
-	boa.CmdT[struct{}]{
+	cmdbase.Run(boa.CmdT[struct{}]{
 		Use:     "dnsmgr2",
 		Short:   "Manage DNS servers",
 		Version: version,
@@ -93,5 +93,5 @@ func main() {
 				},
 			},
 		),
-	}.Run()
+	})
 }
