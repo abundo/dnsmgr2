@@ -142,22 +142,41 @@ func (dm *DnsManager) AddReverseZone(hostDnsTemplate *ConfigDNS_HostTemplate, co
 // Go through configuration of zones, and create internal data structures
 func (dm *DnsManager) LoadZones() error {
 	for _, host := range dm.C.Dnsmgr2 {
-		hostDnsTemplate, ok := dm.C.DNS.HostTemplates[host.HostDnsTemplate]
-		if !ok {
-			return errors.New("unknown Host DNS template: " + host.HostDnsTemplate)
-		}
-		for _, confZone := range host.Zones {
-			switch confZone.Type {
-			case "forward":
-				dm.AddForwardZone(&hostDnsTemplate, &confZone)
-			case "reverse4", "reverse6":
-				dm.AddReverseZone(&hostDnsTemplate, &confZone)
-			default:
-				return errors.New("unknown zone type: " + confZone.Type)
+		if host.HostDnsTemplate == "" {
+			if len(host.Zones) > 0 {
+				return errors.New("zones require host_dns_template")
+			}
+		} else {
+			hostDnsTemplate, ok := dm.C.DNS.HostTemplates[host.HostDnsTemplate]
+			if !ok {
+				return errors.New("unknown Host DNS template: " + host.HostDnsTemplate)
+			}
+			for _, confZone := range host.Zones {
+				switch confZone.Type {
+				case "forward":
+					dm.AddForwardZone(&hostDnsTemplate, &confZone)
+				case "reverse4", "reverse6":
+					dm.AddReverseZone(&hostDnsTemplate, &confZone)
+				default:
+					return errors.New("unknown zone type: " + confZone.Type)
+				}
+			}
+			for _, zone := range *dm.Zones {
+				slog.Info("Manage", "dns-zone", zone.Name)
 			}
 		}
-		for _, zone := range *dm.Zones {
-			slog.Info("Manage", "dns-zone", zone.Name)
+		if host.HostDhcpTemplate != "" {
+			if _, ok := dm.C.DHCP.HostTemplates[host.HostDhcpTemplate]; !ok {
+				return errors.New("unknown Host DHCP template: " + host.HostDhcpTemplate)
+			}
+		} else if len(host.Prefixes) > 0 {
+			return errors.New("prefixes require host_dhcp_template")
+		}
+		for _, p := range host.Prefixes {
+			if _, err := resolvePrefix(p); err != nil {
+				return err
+			}
+			slog.Info("Manage", "dhcp-prefix", p.Name)
 		}
 	}
 	return nil
@@ -166,22 +185,27 @@ func (dm *DnsManager) LoadZones() error {
 func (dm *DnsManager) Restart() error {
 	slog.Debug("DnsMgr2.Restart()")
 	for _, dest := range dm.C.Dnsmgr2 {
-		hostDnsTemplate, ok := dm.C.DNS.HostTemplates[dest.HostDnsTemplate]
-		if !ok {
-			return errors.New("unknown Host DNS template: " + dest.HostDnsTemplate)
-		}
-		switch hostDnsTemplate.Type {
-		case "isc_bind":
-			d := NewISCBINDManager(DNSManagerOpt{
-				ConfigDNS:  &dm.C.DNS,
-				ConfigData: dm.C.Dnsmgr2,
-				Zones:      *dm.Zones,
-			})
-			if err := d.Restart(&hostDnsTemplate); err != nil {
-				return err
+		if dest.HostDnsTemplate != "" {
+			hostDnsTemplate, ok := dm.C.DNS.HostTemplates[dest.HostDnsTemplate]
+			if !ok {
+				return errors.New("unknown Host DNS template: " + dest.HostDnsTemplate)
 			}
-		default:
-			return errors.New("unknown DnsTemplate type:" + hostDnsTemplate.Type)
+			switch hostDnsTemplate.Type {
+			case "isc_bind":
+				d := NewISCBINDManager(DNSManagerOpt{
+					ConfigDNS:  &dm.C.DNS,
+					ConfigData: dm.C.Dnsmgr2,
+					Zones:      *dm.Zones,
+				})
+				if err := d.Restart(&hostDnsTemplate); err != nil {
+					return err
+				}
+			default:
+				return errors.New("unknown DnsTemplate type:" + hostDnsTemplate.Type)
+			}
+		}
+		if err := dm.restartDHCP(dest); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -190,22 +214,30 @@ func (dm *DnsManager) Restart() error {
 func (dm *DnsManager) Status() error {
 	slog.Debug("DnsMgr2.Status()")
 	for _, dest := range dm.C.Dnsmgr2 {
-		hostDnsTemplate, ok := dm.C.DNS.HostTemplates[dest.HostDnsTemplate]
-		if !ok {
-			return errors.New("unknown Host DNS template: " + dest.HostDnsTemplate)
+		if dest.HostDnsTemplate != "" {
+			hostDnsTemplate, ok := dm.C.DNS.HostTemplates[dest.HostDnsTemplate]
+			if !ok {
+				return errors.New("unknown Host DNS template: " + dest.HostDnsTemplate)
+			}
+			switch hostDnsTemplate.Type {
+			case "isc_bind":
+				d := NewISCBINDManager(DNSManagerOpt{
+					ConfigDNS:  &dm.C.DNS,
+					ConfigData: dm.C.Dnsmgr2,
+					Zones:      *dm.Zones,
+				})
+				if err := d.Status(&hostDnsTemplate); err != nil {
+					return err
+				}
+			default:
+				return errors.New("unknown DnsTemplate type:" + hostDnsTemplate.Type)
+			}
 		}
-		switch hostDnsTemplate.Type {
-		case "isc_bind":
-			d := NewISCBINDManager(DNSManagerOpt{
-				ConfigDNS:  &dm.C.DNS,
-				ConfigData: dm.C.Dnsmgr2,
-				Zones:      *dm.Zones,
-			})
-			if err := d.Status(&hostDnsTemplate); err != nil {
+		if dest.HostDhcpTemplate != "" {
+			k := NewKeaDHCPManager(KeaDHCPManagerOpt{})
+			if err := k.Status(); err != nil {
 				return err
 			}
-		default:
-			return errors.New("unknown DnsTemplate type:" + hostDnsTemplate.Type)
 		}
 	}
 	return nil
@@ -215,33 +247,101 @@ func (dm *DnsManager) Status() error {
 func (dm *DnsManager) Sync() error {
 	var err error
 	for _, dest := range dm.C.Dnsmgr2 {
-		hostDnsTemplate, ok := dm.C.DNS.HostTemplates[dest.HostDnsTemplate]
-		if !ok {
-			return errors.New("unknown Host DNS template: " + dest.HostDnsTemplate)
+		if dest.HostDnsTemplate == "" && dest.HostDhcpTemplate == "" {
+			return errors.New("dnsmgr2 entry needs host_dns_template or host_dhcp_template")
 		}
-		switch hostDnsTemplate.Type {
-		case "isc_bind":
-			d := NewISCBINDManager(DNSManagerOpt{
-				Dbfile:     dm.C.Dbfile,
-				ConfigDNS:  &dm.C.DNS,
-				ConfigData: dm.C.Dnsmgr2,
-				Zones:      *dm.Zones,
-			})
-			err = d.PreUpdate()
-			if err != nil {
-				return err
+		if dest.HostDnsTemplate != "" {
+			hostDnsTemplate, ok := dm.C.DNS.HostTemplates[dest.HostDnsTemplate]
+			if !ok {
+				return errors.New("unknown Host DNS template: " + dest.HostDnsTemplate)
 			}
-			err = d.Update(&hostDnsTemplate, false)
-			if err != nil {
-				return err
+			switch hostDnsTemplate.Type {
+			case "isc_bind":
+				d := NewISCBINDManager(DNSManagerOpt{
+					Dbfile:     dm.C.Dbfile,
+					ConfigDNS:  &dm.C.DNS,
+					ConfigData: dm.C.Dnsmgr2,
+					Zones:      *dm.Zones,
+				})
+				err = d.PreUpdate()
+				if err != nil {
+					return err
+				}
+				err = d.Update(&hostDnsTemplate, false)
+				if err != nil {
+					return err
+				}
+				err = d.UpdateCommit(&hostDnsTemplate)
+				if err != nil {
+					return err
+				}
+			default:
+				return errors.New("unknown DnsTemplate type:" + hostDnsTemplate.Type)
 			}
-			err = d.UpdateCommit(&hostDnsTemplate)
-			if err != nil {
-				return err
-			}
-		default:
-			return errors.New("unknown DnsTemplate type:" + hostDnsTemplate.Type)
+		}
+		if err := dm.syncDHCP(dest); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func (dm *DnsManager) syncDHCP(dest ConfigDataType) error {
+	if dest.HostDhcpTemplate == "" {
+		return nil
+	}
+	host, ok := dm.C.DHCP.HostTemplates[dest.HostDhcpTemplate]
+	if !ok {
+		return errors.New("unknown Host DHCP template: " + dest.HostDhcpTemplate)
+	}
+	typ := host.Type
+	if typ == "" {
+		typ = "isc_kea"
+	}
+	switch typ {
+	case "isc_kea":
+		k := NewKeaDHCPManager(KeaDHCPManagerOpt{
+			ConfigDHCP: &dm.C.DHCP,
+			Host:       &host,
+			Prefixes:   dest.Prefixes,
+			Zones:      *dm.Zones,
+		})
+		if err := k.Update(); err != nil {
+			return err
+		}
+		return k.UpdateCommit()
+	default:
+		return errors.New("unknown DHCP template type: " + typ)
+	}
+}
+
+func (dm *DnsManager) restartDHCP(dest ConfigDataType) error {
+	if dest.HostDhcpTemplate == "" {
+		return nil
+	}
+	host, ok := dm.C.DHCP.HostTemplates[dest.HostDhcpTemplate]
+	if !ok {
+		return errors.New("unknown Host DHCP template: " + dest.HostDhcpTemplate)
+	}
+	typ := host.Type
+	if typ == "" {
+		typ = "isc_kea"
+	}
+	switch typ {
+	case "isc_kea":
+		k := NewKeaDHCPManager(KeaDHCPManagerOpt{Host: &host})
+		if host.IPv4.Enable {
+			if err := k.Restart(&host.IPv4); err != nil {
+				return err
+			}
+		}
+		if host.IPv6.Enable {
+			if err := k.Restart(&host.IPv6); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return errors.New("unknown DHCP template type: " + typ)
+	}
 }

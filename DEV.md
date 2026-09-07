@@ -47,12 +47,10 @@ Local dry-run (writes `dist/`, does not publish):
   `status`)
 - `cmd/cmd_base.go` — shared flags (`-c` / `--config-file`, `-d`,
   `-l` / `--loglevel`); config defaults to `/etc/dnsmgr2/dnsmgr2.yaml`
-- `internal/` — records file parser, zone/serial handling, ISC BIND driver
+- `internal/` — records file parser, zone/serial handling, ISC BIND and
+  ISC Kea drivers
 - `models/` — sqlite `Zone` row (SOA serial date + sequence)
 - `examples/` — sample YAML config and records file
-
-DHCP types under `internal/dhcp*.go` are placeholders and are not wired
-to the CLI.
 
 `status` is not implemented yet.
 

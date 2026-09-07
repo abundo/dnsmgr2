@@ -113,7 +113,10 @@ func SrcfileLoad(dm *DnsManager, filename string) error {
 		if args != "" {
 			tmp := strings.Fields(args)
 			for _, e := range tmp {
-				parts := strings.Split(e, "=")
+				parts := strings.SplitN(e, "=", 2)
+				if len(parts) != 2 {
+					return errors.New("unknown record options: " + e)
+				}
 				switch parts[0] {
 				case "mac":
 					mac, err = GetMACaddress(parts[1])
@@ -127,7 +130,7 @@ func SrcfileLoad(dm *DnsManager, filename string) error {
 					}
 					reverse = &tmp
 				default:
-					return errors.New("unknown record options: " + strings.Join(parts, " "))
+					return errors.New("unknown record options: " + e)
 				}
 			}
 		}

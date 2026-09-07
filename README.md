@@ -2,15 +2,20 @@
 
 [![ci](https://github.com/abundo/dnsmgr2/actions/workflows/ci.yml/badge.svg)](https://github.com/abundo/dnsmgr2/actions/workflows/ci.yml)
 
-Tool to manage ISC BIND from a text records file.
+Tool to manage ISC BIND and ISC Kea from a text records file.
 
 It writes forward and reverse zone files, keeps SOA serial numbers in a
-sqlite3 database, and reloads BIND when a zone changes.
+sqlite3 database, and reloads BIND when a zone changes. When DHCP is
+configured it writes Kea DHCPv4/DHCPv6 config (subnets, pools, and host
+reservations) and restarts Kea when that config changes.
 
 ## Installation
 
 Requires BIND's `named-checkzone` on `PATH` (Debian/Ubuntu: `bind9-utils`).
-`sync` writes under `/etc/bind` and `/var/lib/bind`, so run it as root.
+If DHCP is enabled and `kea-dhcp4` / `kea-dhcp6` are on `PATH`, `sync`
+also runs `kea-dhcp4 -t` / `kea-dhcp6 -t` on the generated config.
+`sync` writes under `/etc/bind`, `/var/lib/bind`, and (when DHCP is
+configured) `/etc/kea`, so run it as root.
 
 Pre-built Linux binaries and `.deb` packages are on the
 [GitHub Releases](https://github.com/abundo/dnsmgr2/releases) page.
@@ -51,6 +56,11 @@ Then:
 
 Later syncs update only changed zones and reload them with `rndc`.
 
+When `host_dhcp_template` is set, `sync` writes a complete Kea JSON
+config (the host template `includefile`, typically `/etc/kea/kea-dhcp4.conf`)
+and restarts Kea if it changed. That file is overwritten on each change,
+the same way zone files are.
+
 ## Configuration
 
 See `examples/dnsmgr2-example.yaml`. The main pieces:
@@ -60,11 +70,18 @@ See `examples/dnsmgr2-example.yaml`. The main pieces:
 - `dns.soa_templates` — SOA values
 - `dns.zone_templates` — default TTL, NS records, and which SOA template
   to use
-- `dnsmgr2` — which host template to use, and the zones to manage
-  (`forward`, `reverse4`, `reverse6`)
+- `dhcp.domain_name` / `dhcp.dns_servers` — global DHCP options
+- `dhcp.host_templates` — Kea paths and restart commands (`ipv4` / `ipv6`)
+- `dnsmgr2` — which host templates to use, DHCP prefixes, and the zones
+  to manage (`forward`, `reverse4`, `reverse6`)
 
 Each zone names a **zone** template (`dns_template`). That template names
 an SOA template.
+
+Each DHCP prefix is a CIDR (`name: 192.0.2.0/24`). Optional `range` is
+the dynamic pool (`192.0.2.100-192.0.2.200`). `gateway` defaults to the
+first usable address in the prefix (network + 1). `subnet_mask` defaults
+to the mask implied by the prefix length.
 
 ## Records file
 
@@ -92,13 +109,19 @@ the type. Supported types include A, AAAA, MX, TXT and TLSA. A and AAAA
 records also get a PTR in a matching reverse zone unless you add
 `; reverse=0`.
 
+If an A or AAAA line ends with `; mac=<mac address>`, Kea gets a host
+reservation for that address. MAC forms `aa:bb:cc:dd:ee:ff`,
+`aa-bb-cc-dd-ee-ff`, `aabb.ccdd.eeff`, and `aabbccddeeff` are accepted.
+
+    test                                    A       192.0.2.4 ; mac=02:00:00:00:00:04
+
 If a nameserver in the zone template is inside the zone (for example
 `ns1.example.com` in `example.com`), it must have an A or AAAA record.
 BIND's `named-checkzone` rejects the zone otherwise.
 
 ## Commands
 
-    dnsmgr2 sync          # write zone files and reload BIND
+    dnsmgr2 sync          # write zone files and Kea config; reload BIND / restart Kea
     dnsmgr2 load          # load records and print them
     dnsmgr2 show-config   # print the resolved configuration
     dnsmgr2 restart       # run the host template restart command

@@ -467,7 +467,9 @@ func (dm *DnsManager) GetSerial(zonename string, next bool) (string, error) {
 
 // Load all sources
 func (dm *DnsManager) Load() error {
-	dm.LoadZones()
+	if err := dm.LoadZones(); err != nil {
+		return err
+	}
 	for _, source := range dm.C.Sources {
 		switch source.Type {
 		case "file":

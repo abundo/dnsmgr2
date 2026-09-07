@@ -83,3 +83,63 @@ _443._tcp.www                           TLSA    3 1 1 ` + strings.Repeat("ab", 3
 		t.Errorf("TLSA value = %q", got["TLSA"])
 	}
 }
+
+func TestSrcfileLoadMACReservation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "records")
+	content := `$DOMAIN example.com
+
+test                                    A       192.0.2.4 ; mac=AA-BB-CC-DD-EE-FF
+mail                                    A       192.0.2.10
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dm := testDnsManager("example.com")
+	if err := SrcfileLoad(dm, path); err != nil {
+		t.Fatalf("SrcfileLoad() = %v", err)
+	}
+
+	var testRec, mailRec *Record
+	for _, r := range (*dm.Zones)[0].Records {
+		switch r.Name {
+		case "test":
+			testRec = r
+		case "mail":
+			mailRec = r
+		}
+	}
+	if testRec == nil {
+		t.Fatal("missing test record")
+	}
+	if testRec.MAC != "aa:bb:cc:dd:ee:ff" {
+		t.Errorf("test MAC = %q, want aa:bb:cc:dd:ee:ff", testRec.MAC)
+	}
+	if mailRec == nil {
+		t.Fatal("missing mail record")
+	}
+	if mailRec.MAC != "" {
+		t.Errorf("mail MAC = %q, want empty", mailRec.MAC)
+	}
+}
+
+func TestSrcfileLoadInvalidMAC(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "records")
+	content := `$DOMAIN example.com
+
+test                                    A       192.0.2.4 ; mac=not-a-mac
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dm := testDnsManager("example.com")
+	err := SrcfileLoad(dm, path)
+	if err == nil {
+		t.Fatal("expected invalid MAC error")
+	}
+	if !strings.Contains(err.Error(), "MAC") {
+		t.Errorf("error = %v, want MAC", err)
+	}
+}

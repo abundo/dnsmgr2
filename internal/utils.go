@@ -66,8 +66,38 @@ func GetBoolean(v string) (bool, error) {
 	return slices.Index(trueval, v) >= 0, nil
 }
 
+// GetMACaddress parses a MAC and returns canonical lowercase colon form
+// (aa:bb:cc:dd:ee:ff). Accepted input: aa:bb:cc:dd:ee:ff, aa-bb-cc-dd-ee-ff,
+// aabb.ccdd.eeff, aabbccddeeff.
 func GetMACaddress(v string) (string, error) {
-	return v, nil
+	v = strings.TrimSpace(strings.ToLower(v))
+	if v == "" {
+		return "", errors.New("empty MAC address")
+	}
+	var hexChars []byte
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		switch {
+		case c == ':' || c == '-' || c == '.':
+			continue
+		case (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'):
+			hexChars = append(hexChars, c)
+		default:
+			return "", errors.New("invalid MAC address: " + v)
+		}
+	}
+	if len(hexChars) != 12 {
+		return "", errors.New("invalid MAC address: " + v)
+	}
+	var b strings.Builder
+	b.Grow(17)
+	for i := 0; i < 12; i += 2 {
+		if i > 0 {
+			b.WriteByte(':')
+		}
+		b.Write(hexChars[i : i+2])
+	}
+	return b.String(), nil
 }
 
 func VerifyDnsname(v string) error {

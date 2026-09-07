@@ -17,7 +17,7 @@ func main() {
 
 	cmdbase.Run(boa.CmdT[struct{}]{
 		Use:     "dnsmgr2",
-		Short:   "Manage DNS servers",
+		Short:   "Manage DNS and DHCP servers",
 		Version: version,
 		SubCmds: boa.SubCmds(
 
@@ -75,7 +75,7 @@ func main() {
 
 			boa.CmdT[cmdbase.Params]{
 				Use:   "sync",
-				Short: "Sync DNS records",
+				Short: "Sync DNS and DHCP records",
 				RunFuncE: func(p *cmdbase.Params, cmd *cobra.Command, args []string) error {
 					dm, err := dnsmgr.NewDnsManager(p.Config)
 					if err != nil {

@@ -17,6 +17,8 @@ sources:
 destinations:
     - type: dns_isc_bind
       name: isc_bind_ubuntu
+    - type: dhcp_isc_kea
+      name: isc_kea
 
 #----------------------------------------------------------------------
 # DNS definitions
@@ -57,11 +59,41 @@ dns:
                 - { name: "@", type: "NS", value: "ns2.example.com." }
 
 #----------------------------------------------------------------------
+# DHCP definitions
+#----------------------------------------------------------------------
+dhcp:
+    domain_name: example.com
+    dns_servers:
+        - 192.0.2.53
+        - 192.0.2.54
+    host_templates:
+        isc_kea:
+            type: isc_kea
+            ipv4:
+                enable: true
+                configdir: /etc/kea
+                includefile: kea-dhcp4.conf
+                tmpdir: /var/lib/dnsmgr2
+                cmd_restart: "systemctl restart kea-dhcp4-server"
+            ipv6:
+                enable: false
+                configdir: /etc/kea
+                includefile: kea-dhcp6.conf
+                tmpdir: /var/lib/dnsmgr2
+                cmd_restart: "systemctl restart kea-dhcp6-server"
+
+#----------------------------------------------------------------------
 # Main entry for config
 #----------------------------------------------------------------------
 
 dnsmgr2:
     - host_dns_template: isc_bind_ubuntu
+      host_dhcp_template: isc_kea
+      prefixes:
+          - name: 192.0.2.0/24
+            range: 192.0.2.100-192.0.2.200
+            # gateway defaults to the first usable address (192.0.2.1)
+            # subnet_mask defaults to 255.255.255.0
       zones:
           - name: example.com
             type: forward

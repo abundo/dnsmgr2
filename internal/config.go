@@ -27,17 +27,33 @@ type ConfigDestinations []ConfigDestination
 
 type ConfigDHCPtemplateProtocol struct {
 	Enable      bool
-	IncludeFile string
-	Restart     string
+	Configdir   string
+	IncludeFile string `yaml:"includefile"`
+	Tmpdir      string
+	CmdRestart  string `yaml:"cmd_restart"`
 }
 
 type ConfigHostDHCPtemplate struct {
-	IPv4 ConfigDHCPtemplateProtocol
-	IPv6 ConfigDHCPtemplateProtocol
+	Type string
+	IPv4 ConfigDHCPtemplateProtocol `yaml:"ipv4"`
+	IPv6 ConfigDHCPtemplateProtocol `yaml:"ipv6"`
 }
 
 type ConfigDHCP struct {
+	DomainName    string                            `yaml:"domain_name"`
+	DNSServers    []string                          `yaml:"dns_servers"`
 	HostTemplates map[string]ConfigHostDHCPtemplate `yaml:"host_templates"`
+}
+
+// ConfigPrefix is a DHCP subnet. Name is a CIDR prefix (192.168.1.0/24).
+// Range is an optional pool (192.168.1.100-192.168.1.200). Gateway defaults
+// to the first usable address in the prefix. SubnetMask defaults to the
+// mask implied by the prefix length (IPv4 only).
+type ConfigPrefix struct {
+	Name       string
+	Range      string
+	Gateway    string
+	SubnetMask string `yaml:"subnet_mask"`
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +121,7 @@ type ConfigZone struct {
 type ConfigDataType struct {
 	HostDnsTemplate  string `yaml:"host_dns_template"`
 	HostDhcpTemplate string `yaml:"host_dhcp_template"`
+	Prefixes         []ConfigPrefix
 	Zones            []ConfigZone
 }
 
