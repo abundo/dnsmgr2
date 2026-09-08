@@ -1,4 +1,4 @@
-package internal
+package dnsmgr
 
 import (
 	"encoding/hex"
@@ -110,7 +110,7 @@ func (dm *DnsManager) AddReverseRecord(domain string, record *Record) error {
 	case 32: // IPv4
 		zone, ok := dm.ZoneReverse4.Lookup(addr)
 		if !ok {
-			slog.Warn("no reverse zone for address, skipping PTR", "address", record.Name)
+			slog.Debug("no reverse zone for address, skipping PTR", "address", record.Name)
 			return nil
 		}
 		name := ReverseIpv4Addr(addr) + ".in-addr.arpa"
@@ -124,7 +124,7 @@ func (dm *DnsManager) AddReverseRecord(domain string, record *Record) error {
 	case 128: // IPv6
 		zone, ok := dm.ZoneReverse6.Lookup(addr)
 		if !ok {
-			slog.Warn("no reverse zone for address, skipping PTR", "address", record.Name)
+			slog.Debug("no reverse zone for address, skipping PTR", "address", record.Name)
 			return nil
 		}
 		name := ReverseIpv6Addr(addr) + ".ip6.arpa"

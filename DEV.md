@@ -47,8 +47,10 @@ Local dry-run (writes `dist/`, does not publish):
   `status`)
 - `cmd/cmd_base.go` — shared flags (`-c` / `--config-file`, `-d`,
   `-l` / `--loglevel`); config defaults to `/etc/dnsmgr2/dnsmgr2.yaml`
-- `internal/` — records parsers (text `type: file`, JSON `type: json`),
-  zone/serial handling, ISC BIND and ISC Kea drivers
+- `dnsmgr/` — library (`NewDnsManager`, `Load`, `Sync`, `LoadConfigFile`);
+  records parsers (text `type: file`, JSON `type: json`), zone/serial
+  handling, ISC BIND and ISC Kea drivers. Import
+  `github.com/abundo/dnsmgr2/dnsmgr`.
 - `models/` — sqlite `Zone` row (SOA serial date + sequence)
 - `examples/` — sample YAML config and records file
 

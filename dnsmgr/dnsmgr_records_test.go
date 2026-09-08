@@ -1,4 +1,4 @@
-package internal
+package dnsmgr
 
 import (
 	"strings"
@@ -202,6 +202,41 @@ func TestVerifySRVAndSSHFPAndTTL(t *testing.T) {
 	zone.Records[0].TTL = maxTTL + 1
 	if err := dm.VerifyRecords(); err == nil {
 		t.Fatal("expected TTL too large")
+	}
+}
+
+func TestAddReverseRecordSkipsMissingZone(t *testing.T) {
+	dm := testDnsManager("example.com")
+	if err := dm.AddReverseZone(testHostTemplate(), &ConfigZone{
+		Name: "192.0.2.0/24",
+		Type: "reverse4",
+	}); err != nil {
+		t.Fatalf("AddReverseZone: %v", err)
+	}
+
+	covered := &Record{Name: "host", Type: "A", Value: "192.0.2.4", Reverse: true}
+	if err := dm.AddForwardRecord("example.com", covered); err != nil {
+		t.Fatalf("covered A: %v", err)
+	}
+	uncovered4 := &Record{Name: "other", Type: "A", Value: "198.51.100.1", Reverse: true}
+	if err := dm.AddForwardRecord("example.com", uncovered4); err != nil {
+		t.Fatalf("uncovered A: %v", err)
+	}
+	uncovered6 := &Record{Name: "v6", Type: "AAAA", Value: "2a00:ff40:0:1::127", Reverse: true}
+	if err := dm.AddForwardRecord("example.com", uncovered6); err != nil {
+		t.Fatalf("uncovered AAAA: %v", err)
+	}
+
+	var ptrs int
+	for _, zone := range *dm.Zones {
+		for _, rec := range zone.Records {
+			if rec.Type == "PTR" {
+				ptrs++
+			}
+		}
+	}
+	if ptrs != 1 {
+		t.Fatalf("PTR count = %d, want 1 (only the covered address)", ptrs)
 	}
 }
 

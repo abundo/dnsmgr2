@@ -6,7 +6,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	cmdbase "github.com/abundo/dnsmgr2/cmd"
-	dnsmgr "github.com/abundo/dnsmgr2/internal"
+	dnsmgr "github.com/abundo/dnsmgr2/dnsmgr"
 )
 
 // Set by GoReleaser via -ldflags.

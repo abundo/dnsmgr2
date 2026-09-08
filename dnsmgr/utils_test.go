@@ -1,4 +1,4 @@
-package internal
+package dnsmgr
 
 import (
 	"os"
@@ -139,6 +139,22 @@ func TestGetSerial(t *testing.T) {
 	}
 	if _, err := GetSerial(nil, "example.com", false); err == nil {
 		t.Fatal("expected nil db error")
+	}
+}
+
+func TestLoadConfigFile(t *testing.T) {
+	cfg, err := LoadConfigFile("../examples/dnsmgr2-example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Dbfile != "/var/lib/dnsmgr2/dnsmgr2.sqlite" {
+		t.Errorf("dbfile = %q", cfg.Dbfile)
+	}
+	if len(cfg.Sources) != 1 || cfg.Sources[0].Type != "file" {
+		t.Errorf("sources = %#v", cfg.Sources)
+	}
+	if _, err := LoadConfigFile(filepath.Join(t.TempDir(), "missing.yaml")); err == nil {
+		t.Fatal("expected missing file error")
 	}
 }
 

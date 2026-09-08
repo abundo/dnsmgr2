@@ -1,4 +1,4 @@
-package internal
+package dnsmgr
 
 //
 // ISC Kea DHCP driver

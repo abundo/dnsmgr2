@@ -128,7 +128,7 @@ A line is `name [ttl] type value`. Optional TTL sits between the name and
 the type. Supported types include A, AAAA, MX, TXT and TLSA. A and AAAA
 records also get a PTR in a matching reverse zone unless you add
 `; reverse=0`. Reverse zones in the config must cover those addresses;
-otherwise the PTR is skipped and a warning is logged.
+otherwise the PTR is skipped.
 
 If an A or AAAA line ends with `; mac=<mac address>`, Kea gets a host
 reservation for that address. MAC forms `aa:bb:cc:dd:ee:ff`,
@@ -206,6 +206,12 @@ Generated files are installed with a same-directory temp file plus
 rename. `named-checkzone` must succeed before a zone is installed. If
 `kea-dhcp4` / `kea-dhcp6` are not on `PATH`, the Kea subnet include is
 still written but not syntax-checked (a warning is logged).
+
+## Library
+
+Import `github.com/abundo/dnsmgr2/dnsmgr`. `LoadConfigFile` reads the YAML
+config; `NewDnsManager`, `Load`, and `Sync` apply BIND/Kea. The CLI is a
+thin wrapper around that API.
 
 ## Development
 

@@ -1,4 +1,4 @@
-package internal
+package dnsmgr
 
 import (
 	"bytes"
@@ -41,6 +41,16 @@ func ReadConfigFile(filename string, config *ConfigRoot) error {
 	}
 	err = yaml.Unmarshal(data, config)
 	return err
+}
+
+// LoadConfigFile reads a dnsmgr2 YAML config. Callers such as factum2-dns
+// use this instead of reimplementing YAML load.
+func LoadConfigFile(filename string) (ConfigRoot, error) {
+	var cfg ConfigRoot
+	if err := ReadConfigFile(filename, &cfg); err != nil {
+		return ConfigRoot{}, err
+	}
+	return cfg, nil
 }
 
 // SetupLogging applies -d / --loglevel to the default slog logger.

@@ -1,4 +1,4 @@
-package internal
+package dnsmgr
 
 import (
 	"github.com/gaissmai/bart"

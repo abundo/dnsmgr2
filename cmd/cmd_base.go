@@ -6,7 +6,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 
-	dnsmgr "github.com/abundo/dnsmgr2/internal"
+	dnsmgr "github.com/abundo/dnsmgr2/dnsmgr"
 )
 
 // ApplyParams applies CLI logging flags. Call at the start of every command.

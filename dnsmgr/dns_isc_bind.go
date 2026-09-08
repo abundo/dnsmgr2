@@ -1,4 +1,4 @@
-package internal
+package dnsmgr
 
 //
 // ISC BIND driver
