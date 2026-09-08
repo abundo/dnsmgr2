@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"path/filepath"
 )
 
 // ---------------------------------------------------------------------------
@@ -14,6 +15,9 @@ import (
 // Add a forward zone, such as example.com
 func (dm *DnsManager) AddForwardZone(hostDnsTemplate *ConfigDNS_HostTemplate, configZone *ConfigZone) error {
 	slog.Debug("Add forward", "zone", configZone)
+	if err := VerifyDnsname(configZone.Name); err != nil {
+		return fmt.Errorf("forward zone %s: %w", configZone.Name, err)
+	}
 	for _, zone := range *dm.ZonesForward {
 		if zone.Name == configZone.Name {
 			return errors.New("zonename already exist: " + configZone.Name)
@@ -31,9 +35,8 @@ func (dm *DnsManager) AddForwardZone(hostDnsTemplate *ConfigDNS_HostTemplate, co
 // Add a reverse zone, such as
 //
 //	192.168.1.0/24
-//	2a00:ff40:1000:://48
+//	2a00:ff40:1000::/48
 func (dm *DnsManager) AddReverseZone(hostDnsTemplate *ConfigDNS_HostTemplate, configZone *ConfigZone) error {
-	var err error
 	slog.Debug("Add reverse", "zone", configZone)
 	prefix1, err := netip.ParsePrefix(configZone.Name)
 	if err != nil {
@@ -46,36 +49,17 @@ func (dm *DnsManager) AddReverseZone(hostDnsTemplate *ConfigDNS_HostTemplate, co
 	addr1 := prefix1.Addr()
 	plen := byte(prefix1.Bits())
 
+	if configZone.Type == "reverse4" && !addr1.Is4() {
+		return fmt.Errorf("reverse4 zone %s is not IPv4", configZone.Name)
+	}
+	if configZone.Type == "reverse6" && !addr1.Is6() {
+		return fmt.Errorf("reverse6 zone %s is not IPv6", configZone.Name)
+	}
+
 	if addr1.Is4() {
 		ip := addr1.As4()
 		switch {
 		case plen > 24:
-			switch plen {
-			case 32:
-				// 10.1.2.0/32
-				// 0.1.2.10.in-addr.arpa
-			case 31:
-				// 10.1.2.0/31
-				// 0-1.2.1.10.in-addr.arpa
-			case 30:
-				// 10.1.2.0/30
-				// 0-3.2.1.10.in-addr.arpa
-			case 29:
-				// 10.1.2.0/29
-				// 0-7.2.1.10.in-addr.arpa
-			case 28:
-				// 10.1.2.0/28
-				// 0-15.2.1.10.in-addr.arpa
-			case 27:
-				// 10.1.2.0/27
-				// 0-31.2.1.10.in-addr.arpa
-			case 26:
-				// 10.1.2.0/26
-				// 0-63.2.1.10.in-addr.arpa
-			case 25:
-				// 10.1.2.0/25
-				// 0-127.2.1.10.in-addr.arpa
-			}
 			return errors.New("reverse ipv4 DNS with prefix length longer than 24 not implemented")
 
 		case plen > 16:
@@ -88,9 +72,11 @@ func (dm *DnsManager) AddReverseZone(hostDnsTemplate *ConfigDNS_HostTemplate, co
 				*dm.Zones = append(*dm.Zones, zone)
 
 				prefix2_str := fmt.Sprintf("%d.%d.%d.0/24", ip[0], ip[1], ip[2]+i)
-				prefix2, _ := netip.ParsePrefix(prefix2_str)
+				prefix2, err := netip.ParsePrefix(prefix2_str)
+				if err != nil {
+					return err
+				}
 				dm.ZoneReverse4.Insert(prefix2, zone)
-
 			}
 
 		case plen > 8:
@@ -103,7 +89,10 @@ func (dm *DnsManager) AddReverseZone(hostDnsTemplate *ConfigDNS_HostTemplate, co
 				*dm.Zones = append(*dm.Zones, zone)
 
 				prefix2_str := fmt.Sprintf("%d.%d.0.0/16", ip[0], ip[1]+i)
-				prefix2, _ := netip.ParsePrefix(prefix2_str)
+				prefix2, err := netip.ParsePrefix(prefix2_str)
+				if err != nil {
+					return err
+				}
 				dm.ZoneReverse4.Insert(prefix2, zone)
 			}
 
@@ -111,22 +100,31 @@ func (dm *DnsManager) AddReverseZone(hostDnsTemplate *ConfigDNS_HostTemplate, co
 			zone := new(Zone)
 			zone.ConfigZone = configZone
 			zone.Host = hostDnsTemplate
-			zone.Name = fmt.Sprintf("%d.%d.in-addr.arpa", ip[1], ip[0])
+			zone.Name = fmt.Sprintf("%d.in-addr.arpa", ip[0])
 			*dm.Zones = append(*dm.Zones, zone)
 
-			prefix2_str := fmt.Sprintf("%d.0.0/8", ip[0])
-			prefix2, _ := netip.ParsePrefix(prefix2_str)
+			prefix2_str := fmt.Sprintf("%d.0.0.0/8", ip[0])
+			prefix2, err := netip.ParsePrefix(prefix2_str)
+			if err != nil {
+				return err
+			}
 			dm.ZoneReverse4.Insert(prefix2, zone)
 
 		default:
 			return errors.New("reverse ipv4 DNS with prefix length less than 8 not implemented")
 		}
 	} else if addr1.Is6() {
+		if plen < 4 {
+			return errors.New("reverse DNS IPv6 prefix length must be at least 4")
+		}
 		if plen&3 != 0 {
 			return errors.New("reverse DNS IPv6 prefix length must be on a 4 bit/nibble boundary")
 		}
 		tmp1 := ReverseIpv6Addr(addr1)
-		cut := (128 - plen) / 2
+		cut := int(128-plen) / 2
+		if cut < 0 || cut >= len(tmp1) {
+			return fmt.Errorf("internal error: IPv6 reverse cut %d for prefix length %d", cut, plen)
+		}
 		zone := new(Zone)
 		zone.ConfigZone = configZone
 		zone.Host = hostDnsTemplate
@@ -151,12 +149,17 @@ func (dm *DnsManager) LoadZones() error {
 			if !ok {
 				return errors.New("unknown Host DNS template: " + host.HostDnsTemplate)
 			}
-			for _, confZone := range host.Zones {
+			for i := range host.Zones {
+				confZone := &host.Zones[i]
 				switch confZone.Type {
 				case "forward":
-					dm.AddForwardZone(&hostDnsTemplate, &confZone)
+					if err := dm.AddForwardZone(&hostDnsTemplate, confZone); err != nil {
+						return err
+					}
 				case "reverse4", "reverse6":
-					dm.AddReverseZone(&hostDnsTemplate, &confZone)
+					if err := dm.AddReverseZone(&hostDnsTemplate, confZone); err != nil {
+						return err
+					}
 				default:
 					return errors.New("unknown zone type: " + confZone.Type)
 				}
@@ -213,6 +216,9 @@ func (dm *DnsManager) Restart() error {
 
 func (dm *DnsManager) Status() error {
 	slog.Debug("DnsMgr2.Status()")
+	if err := dm.LoadZones(); err != nil {
+		return err
+	}
 	for _, dest := range dm.C.Dnsmgr2 {
 		if dest.HostDnsTemplate != "" {
 			hostDnsTemplate, ok := dm.C.DNS.HostTemplates[dest.HostDnsTemplate]
@@ -234,9 +240,20 @@ func (dm *DnsManager) Status() error {
 			}
 		}
 		if dest.HostDhcpTemplate != "" {
-			k := NewKeaDHCPManager(KeaDHCPManagerOpt{})
-			if err := k.Status(); err != nil {
-				return err
+			host, ok := dm.C.DHCP.HostTemplates[dest.HostDhcpTemplate]
+			if !ok {
+				return errors.New("unknown Host DHCP template: " + dest.HostDhcpTemplate)
+			}
+			k := NewKeaDHCPManager(KeaDHCPManagerOpt{Host: &host})
+			if host.IPv4.Enable {
+				if err := k.Status(&host.IPv4, "DHCPv4"); err != nil {
+					return err
+				}
+			}
+			if host.IPv6.Enable {
+				if err := k.Status(&host.IPv6, "DHCPv6"); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -245,7 +262,31 @@ func (dm *DnsManager) Status() error {
 
 // Sync all destinations
 func (dm *DnsManager) Sync() error {
-	var err error
+	lockPath := dm.lockPath()
+	if lockPath != "" {
+		lock, err := AcquireLock(lockPath)
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+	}
+
+	needsDNS := false
+	for _, dest := range dm.C.Dnsmgr2 {
+		if dest.HostDnsTemplate != "" {
+			needsDNS = true
+			break
+		}
+	}
+	if needsDNS {
+		db, err := ConnectMigrate(dm.C.Dbfile)
+		if err != nil {
+			return err
+		}
+		dm.DB = db
+		defer CloseDB(db)
+	}
+
 	for _, dest := range dm.C.Dnsmgr2 {
 		if dest.HostDnsTemplate == "" && dest.HostDhcpTemplate == "" {
 			return errors.New("dnsmgr2 entry needs host_dns_template or host_dhcp_template")
@@ -259,11 +300,12 @@ func (dm *DnsManager) Sync() error {
 			case "isc_bind":
 				d := NewISCBINDManager(DNSManagerOpt{
 					Dbfile:     dm.C.Dbfile,
+					DB:         dm.DB,
 					ConfigDNS:  &dm.C.DNS,
 					ConfigData: dm.C.Dnsmgr2,
 					Zones:      *dm.Zones,
 				})
-				err = d.PreUpdate()
+				err := d.PreUpdate()
 				if err != nil {
 					return err
 				}
@@ -284,6 +326,30 @@ func (dm *DnsManager) Sync() error {
 		}
 	}
 	return nil
+}
+
+func (dm *DnsManager) lockPath() string {
+	if dm.C.Dbfile != "" {
+		return dm.C.Dbfile + ".lock"
+	}
+	for _, dest := range dm.C.Dnsmgr2 {
+		if dest.HostDnsTemplate != "" {
+			if h, ok := dm.C.DNS.HostTemplates[dest.HostDnsTemplate]; ok && h.Tmpdir != "" {
+				return filepath.Join(h.Tmpdir, "dnsmgr2.lock")
+			}
+		}
+		if dest.HostDhcpTemplate != "" {
+			if h, ok := dm.C.DHCP.HostTemplates[dest.HostDhcpTemplate]; ok {
+				if h.IPv4.Tmpdir != "" {
+					return filepath.Join(h.IPv4.Tmpdir, "dnsmgr2.lock")
+				}
+				if h.IPv6.Tmpdir != "" {
+					return filepath.Join(h.IPv6.Tmpdir, "dnsmgr2.lock")
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func (dm *DnsManager) syncDHCP(dest ConfigDataType) error {

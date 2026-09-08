@@ -59,7 +59,9 @@ Later syncs update only changed zones and reload them with `rndc`.
 When `host_dhcp_template` is set, `sync` writes a complete Kea JSON
 config (the host template `includefile`, typically `/etc/kea/kea-dhcp4.conf`)
 and restarts Kea if it changed. That file is overwritten on each change,
-the same way zone files are.
+the same way zone files are. By default Kea is configured to listen on
+all interfaces (`*`); set `interfaces` on the IPv4/IPv6 host template to
+restrict that.
 
 ## Configuration
 
@@ -67,11 +69,13 @@ See `examples/dnsmgr2-example.yaml`. The main pieces:
 
 - `sources` — records file (`type: file` text, or `type: json` for factum2)
 - `dns.host_templates` — BIND paths and reload/restart commands
-- `dns.soa_templates` — SOA values
+- `dns.soa_templates` — SOA values (`rname` is a domain-name, e.g.
+  `support.example.com.`, not an email address)
 - `dns.zone_templates` — default TTL, NS records, and which SOA template
   to use
 - `dhcp.domain_name` / `dhcp.dns_servers` — global DHCP options
-- `dhcp.host_templates` — Kea paths and restart commands (`ipv4` / `ipv6`)
+- `dhcp.host_templates` — Kea paths, optional `interfaces`, and
+  restart/status commands (`ipv4` / `ipv6`)
 - `dnsmgr2` — which host templates to use, DHCP prefixes, and the zones
   to manage (`forward`, `reverse4`, `reverse6`)
 
@@ -101,14 +105,16 @@ or `;` are ignored.
 Directives:
 
 - `$DOMAIN` — current forward zone
-- `$INCLUDE` — read another records file
+- `$INCLUDE` — read another records file (path is relative to the
+  including file and must stay under that file's directory)
 - `$FORWARD` / `$REVERSE` / `$REVERSE4` / `$REVERSE6` — `on`/`off` (also
   `true`/`false`, `1`/`0`, `yes`/`no`)
 
 A line is `name [ttl] type value`. Optional TTL sits between the name and
 the type. Supported types include A, AAAA, MX, TXT and TLSA. A and AAAA
 records also get a PTR in a matching reverse zone unless you add
-`; reverse=0`.
+`; reverse=0`. Reverse zones in the config must cover those addresses;
+otherwise the PTR is skipped and a warning is logged.
 
 If an A or AAAA line ends with `; mac=<mac address>`, Kea gets a host
 reservation for that address. MAC forms `aa:bb:cc:dd:ee:ff`,
@@ -156,15 +162,36 @@ Keep `type: file` for the human-edited text format above.
     dnsmgr2 load          # load records and print them
     dnsmgr2 show-config   # print the resolved configuration
     dnsmgr2 restart       # run the host template restart command
+    dnsmgr2 status        # run cmd_status if set, otherwise report whether dest files exist
 
 Global flags: `-d` (debug), `-l` / `--loglevel` (`error`, `warning`,
-`info`, `debug`), `-c` / `--config-file`.
+`info`, `debug`), `-c` / `--config-file`. `-d` forces debug regardless of
+`--loglevel`.
 
 ## Daily use
 
 Edit `/etc/dnsmgr2/records`, then:
 
     sudo dnsmgr2 sync
+
+## Security
+
+`sync` is a local admin tool, not a network service. Run it as root (or
+with write access to BIND/Kea paths and permission to run the configured
+commands). Anyone who can edit the YAML config or the records file can
+change DNS/DHCP data and cause dnsmgr2 to exec the host-template
+commands (`rndc`, `systemctl`, …). Those command strings are split on
+whitespace and are not passed to a shell.
+
+`$INCLUDE` cannot read files outside the original records file's
+directory. Zone and include paths are rejected if they escape their
+configured directories. `sync` takes an exclusive lock next to `dbfile`
+so two processes cannot rewrite configs at once.
+
+Generated files are installed with a same-directory temp file plus
+rename. `named-checkzone` must succeed before a zone is installed. If
+`kea-dhcp4` / `kea-dhcp6` are not on `PATH`, Kea config is still written
+but not syntax-checked (a warning is logged).
 
 ## Development
 

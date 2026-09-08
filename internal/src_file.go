@@ -3,34 +3,62 @@ package internal
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
 
+const maxIncludeDepth = 16
+
+type srcfileState struct {
+	domain   string
+	forward  bool
+	reverse4 bool
+	reverse6 bool
+	depth    int
+	rootDir  string
+	seen     map[string]bool
+}
+
 // Read all records from the records file
 //
-// dm: pointer to dnsmgr
-// filename: file to read
-//
-// Empty lines and comments starting with # or ; are ignored
-//
-// recursive function, to handle $INCLUDE to other files
+// Empty lines and comments starting with # or ; are ignored.
+// $INCLUDE paths are relative to the including file and must stay under
+// the original source file's directory.
 
 func SrcfileLoad(dm *DnsManager, filename string) error {
-	var err error
+	abs, err := filepath.Abs(filename)
+	if err != nil {
+		return err
+	}
+	st := &srcfileState{
+		forward:  true,
+		reverse4: true,
+		reverse6: true,
+		rootDir:  filepath.Dir(abs),
+		seen:     map[string]bool{},
+	}
+	return srcfileLoad(dm, abs, st)
+}
 
-	var domain string
-	var forward bool = true
-	var reverse4 bool = true
-	var reverse6 bool = true
+func srcfileLoad(dm *DnsManager, filename string, st *srcfileState) error {
+	cleaned := filepath.Clean(filename)
+	if st.depth > maxIncludeDepth {
+		return fmt.Errorf("$INCLUDE nested too deeply (%s)", cleaned)
+	}
+	if !pathUnderRoot(st.rootDir, cleaned) {
+		return fmt.Errorf("$INCLUDE %s is outside %s", cleaned, st.rootDir)
+	}
+	if st.seen[cleaned] {
+		return fmt.Errorf("$INCLUDE cycle: %s", cleaned)
+	}
+	st.seen[cleaned] = true
+	defer delete(st.seen, cleaned)
 
-	var args string
-	var mac string
-	var reverse *bool
-
-	file, err := os.Open(filename)
+	file, err := os.Open(cleaned)
 	if err != nil {
 		return err
 	}
@@ -44,51 +72,60 @@ func SrcfileLoad(dm *DnsManager, filename string) error {
 			continue
 		}
 		if strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
-			// ignore comment
 			continue
 		}
 		if strings.HasPrefix(line, "$") {
-			// directive
 			tmp := strings.SplitN(line, " ", 2)
 			if len(tmp) < 2 {
 				return errors.New("unknown directive or syntax: " + line)
 			}
+			arg := strings.TrimSpace(tmp[1])
 			switch tmp[0] {
 			case "$DOMAIN":
-				err = VerifyDnsname(tmp[1])
+				err = VerifyDnsname(arg)
 				if err != nil {
 					return err
 				}
-				domain = tmp[1]
+				st.domain = arg
 				continue
 			case "$INCLUDE":
-				// should domain, forward/reverse follow to new file?
-				err = SrcfileLoad(dm, tmp[1])
+				if arg == "" {
+					return errors.New("$INCLUDE path is empty")
+				}
+				var incPath string
+				if filepath.IsAbs(arg) {
+					incPath = filepath.Clean(arg)
+				} else {
+					incPath = filepath.Join(filepath.Dir(cleaned), arg)
+				}
+				st.depth++
+				err = srcfileLoad(dm, incPath, st)
+				st.depth--
 				if err != nil {
 					return err
 				}
 				continue
 			case "$FORWARD":
-				forward, err = GetBoolean(tmp[1])
+				st.forward, err = GetBoolean(arg)
 				if err != nil {
 					return err
 				}
 				continue
 			case "$REVERSE":
-				reverse4, err = GetBoolean(tmp[1])
+				st.reverse4, err = GetBoolean(arg)
 				if err != nil {
 					return err
 				}
-				reverse6 = reverse4
+				st.reverse6 = st.reverse4
 				continue
 			case "$REVERSE4":
-				reverse4, err = GetBoolean(tmp[1])
+				st.reverse4, err = GetBoolean(arg)
 				if err != nil {
 					return err
 				}
 				continue
 			case "$REVERSE6":
-				reverse6, err = GetBoolean(tmp[1])
+				st.reverse6, err = GetBoolean(arg)
 				if err != nil {
 					return err
 				}
@@ -98,18 +135,10 @@ func SrcfileLoad(dm *DnsManager, filename string) error {
 			}
 		}
 
-		// Check if there is options after record
-		// ; key=val key=val...
-		//
-		//  key mac,     value = xxxx.xxxx.xxxx
-		//  key reverse, value = [0|1]
-		//
-		// ';' inside a quoted TXT value is not an option separator.
+		mac := ""
+		var reverse *bool
 
-		mac = ""
-		reverse = nil
-
-		line, args = splitRecordOptions(line)
+		line, args := splitRecordOptions(line)
 		if args != "" {
 			tmp := strings.Fields(args)
 			for _, e := range tmp {
@@ -147,46 +176,31 @@ func SrcfileLoad(dm *DnsManager, filename string) error {
 		r.Type = typ
 		r.Value = value
 		r.MAC = mac
-		r.Forward = forward
+		r.Forward = st.forward
 
 		if r.Name != "@" {
-			err := VerifyDnsname(r.Name)
-			if err != nil {
+			if err := VerifyDnsname(r.Name); err != nil {
 				return err
 			}
 		}
 
 		if reverse == nil {
 			if r.Type == "A" {
-				reverse = &reverse4
+				reverse = &st.reverse4
 			}
 			if r.Type == "AAAA" {
-				reverse = &reverse6
+				reverse = &st.reverse6
 			}
 		}
 		if reverse != nil {
 			r.Reverse = *reverse
 		}
-		err = dm.AddForwardRecord(domain, r)
+		err = dm.AddForwardRecord(st.domain, r)
 		if err != nil {
 			return err
 		}
 	}
 	return scanner.Err()
-}
-
-func SrcfileStatus(dm *DnsManager) error {
-	slog.Debug("source-file-status")
-	for _, source := range dm.C.Destinations {
-		if source.Type != "file" {
-			return errors.New("incorrect source file type:" + source.Type)
-		}
-		if _, err := os.Stat(source.Name); errors.Is(err, os.ErrNotExist) {
-			return errors.New("source file does not exist" + source.Name)
-		}
-		slog.Debug("source-file-status-valid", "type", source.Type, "path", source.Name)
-	}
-	return nil
 }
 
 // splitRecordOptions splits "record ; key=val..." while ignoring ';' inside quotes.

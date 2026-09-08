@@ -52,7 +52,8 @@ Local dry-run (writes `dist/`, does not publish):
 - `models/` — sqlite `Zone` row (SOA serial date + sequence)
 - `examples/` — sample YAML config and records file
 
-`status` is not implemented yet.
+`status` runs each host template `cmd_status` when set, otherwise prints
+whether generated BIND/Kea files exist.
 
 ## Local run
 

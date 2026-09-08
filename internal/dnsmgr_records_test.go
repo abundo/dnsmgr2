@@ -176,6 +176,35 @@ func TestVerifyRecordsMXDestination(t *testing.T) {
 	})
 }
 
+func TestVerifySRVAndSSHFPAndTTL(t *testing.T) {
+	if err := verifySRV("10 20 443 target.example.com."); err != nil {
+		t.Errorf("verifySRV: %v", err)
+	}
+	if err := verifySRV("10 20"); err == nil {
+		t.Error("expected SRV error")
+	}
+	fp := strings.Repeat("ab", 32)
+	if err := verifySSHFP("4 2 " + fp); err != nil {
+		t.Errorf("verifySSHFP: %v", err)
+	}
+	if err := verifySSHFP("4 2 zz"); err == nil {
+		t.Error("expected SSHFP hex error")
+	}
+
+	dm := testDnsManager("example.com")
+	zone := (*dm.Zones)[0]
+	zone.Records = RecordsType{
+		{Name: "www", Type: "A", Value: "192.0.2.4", TTL: 86400, Forward: true},
+	}
+	if err := dm.VerifyRecords(); err != nil {
+		t.Fatalf("TTL 86400 should be allowed: %v", err)
+	}
+	zone.Records[0].TTL = maxTTL + 1
+	if err := dm.VerifyRecords(); err == nil {
+		t.Fatal("expected TTL too large")
+	}
+}
+
 func TestVerifyRecordsTLSAAndTXT(t *testing.T) {
 	dm := testDnsManager("example.com")
 	zone := (*dm.Zones)[0]

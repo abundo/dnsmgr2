@@ -9,6 +9,11 @@ import (
 	dnsmgr "github.com/abundo/dnsmgr2/internal"
 )
 
+// ApplyParams applies CLI logging flags. Call at the start of every command.
+func ApplyParams(p *Params) {
+	dnsmgr.SetupLogging(p.Debug, p.Loglevel)
+}
+
 type Params struct {
 	ConfigFile string `configfile:"true" optional:"true" default:"/etc/dnsmgr2/dnsmgr2.yaml"`
 	Debug      bool   `descr:"Enable verbose debug logging" short:"d"`

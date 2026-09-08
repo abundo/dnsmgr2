@@ -1,7 +1,11 @@
 package internal
 
 import (
+	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/abundo/dnsmgr2/models"
 	"github.com/glebarez/sqlite"
@@ -9,6 +13,14 @@ import (
 )
 
 func ConnectDatabase(dbfile string) (*gorm.DB, error) {
+	if strings.TrimSpace(dbfile) == "" {
+		return nil, errors.New("dbfile is empty")
+	}
+	if dir := filepath.Dir(dbfile); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, err
+		}
+	}
 	slog.Info("Opening", "database", dbfile)
 	db, err := gorm.Open(sqlite.Open(dbfile), &gorm.Config{})
 
@@ -38,4 +50,15 @@ func ConnectMigrate(dbfile string) (*gorm.DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+func CloseDB(db *gorm.DB) error {
+	if db == nil {
+		return nil
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
 }

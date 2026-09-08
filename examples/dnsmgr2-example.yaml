@@ -1,5 +1,4 @@
 ---
-default_domain: example.com
 dbfile: /var/lib/dnsmgr2/dnsmgr2.sqlite
 
 #----------------------------------------------------------------------
@@ -12,16 +11,6 @@ sources:
     # factum2-dns writes JSON instead:
     # - type: json
     #   name: /etc/dnsmgr2/records
-
-#----------------------------------------------------------------------
-# List of Destinations, where to write data
-#----------------------------------------------------------------------
-
-destinations:
-    - type: dns_isc_bind
-      name: isc_bind_ubuntu
-    - type: dhcp_isc_kea
-      name: isc_kea
 
 #----------------------------------------------------------------------
 # DNS definitions
@@ -39,12 +28,13 @@ dns:
             cmd_reload_all: "sudo rndc reload"
             cmd_reload_zone: "sudo rndc reload {zone}"
             cmd_restart: "systemctl restart named.service"
+            cmd_status: "rndc status"
 
     # Templates for SOA record
     soa_templates:
         default_soa:
             mname: ns1.example.com.
-            rname: support@example.com.
+            rname: support.example.com.
             # date_serial: YYYYMMDDnn (2018061500)
             serial_format: date_serial
             refresh: 36000
@@ -56,7 +46,7 @@ dns:
         default_dns:
             soa: default_soa
             default_ttl: 900
-            dnssec_policy: dnssec-policy
+            dnssec_policy: default
             ns:
                 - { name: "@", type: "NS", value: "ns1.example.com." }
                 - { name: "@", type: "NS", value: "ns2.example.com." }
@@ -77,13 +67,17 @@ dhcp:
                 configdir: /etc/kea
                 includefile: kea-dhcp4.conf
                 tmpdir: /var/lib/dnsmgr2
+                # default is all interfaces; set this to limit where Kea listens
+                # interfaces: ["eth0"]
                 cmd_restart: "systemctl restart kea-dhcp4-server"
+                cmd_status: "systemctl is-active kea-dhcp4-server"
             ipv6:
                 enable: false
                 configdir: /etc/kea
                 includefile: kea-dhcp6.conf
                 tmpdir: /var/lib/dnsmgr2
                 cmd_restart: "systemctl restart kea-dhcp6-server"
+                cmd_status: "systemctl is-active kea-dhcp6-server"
 
 #----------------------------------------------------------------------
 # Main entry for config
@@ -103,7 +97,7 @@ dnsmgr2:
             type: forward
             dns_template: default_dns
 
-          - name: 192.168.0.0/16
+          - name: 192.0.2.0/24
             type: reverse4
             dns_template: default_dns
 

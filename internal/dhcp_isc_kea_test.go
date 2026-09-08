@@ -103,6 +103,32 @@ func TestKeaBuildDhcp4ReservationAndDefaults(t *testing.T) {
 	}
 }
 
+func TestKeaCustomInterfaces(t *testing.T) {
+	dir := t.TempDir()
+	host := testKeaHost(dir)
+	host.IPv4.Interfaces = []string{"eth0"}
+	k := NewKeaDHCPManager(KeaDHCPManagerOpt{
+		ConfigDHCP: &ConfigDHCP{},
+		Host:       host,
+		Prefixes:   []ConfigPrefix{{Name: "192.0.2.0/24"}},
+	})
+	if err := k.Update(); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "kea-dhcp4.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonStart := strings.Index(string(body), "{")
+	var cfg keaConfig4
+	if err := json.Unmarshal([]byte(string(body)[jsonStart:]), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Dhcp4.InterfacesConfig.Interfaces) != 1 || cfg.Dhcp4.InterfacesConfig.Interfaces[0] != "eth0" {
+		t.Errorf("interfaces = %#v", cfg.Dhcp4.InterfacesConfig.Interfaces)
+	}
+}
+
 func TestKeaPrefixDNSServersOverride(t *testing.T) {
 	dir := t.TempDir()
 	k := NewKeaDHCPManager(KeaDHCPManagerOpt{

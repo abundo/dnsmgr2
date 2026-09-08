@@ -11,17 +11,26 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/abundo/dnsmgr2/models"
+	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v2"
+	"gorm.io/gorm"
 )
+
+const maxTTL int64 = 2147483647 // RFC 2181: 32-bit TTL, high bit treated as 0
 
 // print structures JSON formatted
 func Pprint(data any) {
-	s, _ := json.MarshalIndent(data, "", "  ")
+	s, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return
+	}
 	fmt.Println(string(s))
 }
 
@@ -34,9 +43,30 @@ func ReadConfigFile(filename string, config *ConfigRoot) error {
 	return err
 }
 
+// SetupLogging applies -d / --loglevel to the default slog logger.
+// -d forces debug regardless of --loglevel.
+func SetupLogging(debug bool, loglevel string) {
+	level := slog.LevelInfo
+	switch strings.ToLower(strings.TrimSpace(loglevel)) {
+	case "error":
+		level = slog.LevelError
+	case "warning", "warn":
+		level = slog.LevelWarn
+	case "info", "":
+		level = slog.LevelInfo
+	case "debug":
+		level = slog.LevelDebug
+	}
+	if debug {
+		level = slog.LevelDebug
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+}
+
 // ----- common functions -----
 
-// RunCommand runs a configured shell-style command string (e.g. "sudo rndc reload example.com").
+// RunCommand runs a configured command string (e.g. "sudo rndc reload example.com").
+// The string is split on whitespace; it is not passed to a shell.
 func RunCommand(cmdline string) error {
 	cmdline = strings.TrimSpace(cmdline)
 	if cmdline == "" {
@@ -100,80 +130,177 @@ func GetMACaddress(v string) (string, error) {
 	return b.String(), nil
 }
 
+// VerifyDnsname checks a DNS owner name or target. "@" is allowed.
+// Labels may contain letters, digits, hyphen, underscore (SRV/TLSA), or be "*".
 func VerifyDnsname(v string) error {
-	_ = v
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return errors.New("DNS name is empty")
+	}
+	if v == "@" {
+		return nil
+	}
+	if strings.ContainsAny(v, "/\\\t\n\r\x00 ") {
+		return fmt.Errorf("invalid DNS name %q", v)
+	}
+	if len(v) > 254 {
+		return fmt.Errorf("DNS name too long: %q", v)
+	}
+	name := strings.TrimSuffix(v, ".")
+	if name == "" {
+		return errors.New("DNS name is empty")
+	}
+	for _, label := range strings.Split(name, ".") {
+		if err := verifyDnsLabel(label); err != nil {
+			return fmt.Errorf("invalid DNS name %q: %w", v, err)
+		}
+	}
 	return nil
 }
 
-// Copy copies the contents of the file at srcpath to a regular file
-// at dstpath. If the file named by dstpath already exists, it is
-// truncated. The function does not copy the file mode, file
-// permission bits, or file attributes.
+func verifyDnsLabel(label string) error {
+	if label == "" {
+		return errors.New("empty label")
+	}
+	if len(label) > 63 {
+		return errors.New("label longer than 63 characters")
+	}
+	if label == "*" {
+		return nil
+	}
+	for i := 0; i < len(label); i++ {
+		c := label[i]
+		switch {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '_', c == '-':
+		default:
+			return fmt.Errorf("invalid character %q in label", rune(c))
+		}
+	}
+	return nil
+}
+
+// SafeJoin joins base and a relative name and rejects empty names, absolute
+// names, and paths that escape base (after cleaning).
+func SafeJoin(base, name string) (string, error) {
+	if strings.TrimSpace(name) == "" {
+		return "", errors.New("empty path name")
+	}
+	if filepath.IsAbs(name) {
+		return "", fmt.Errorf("path must be relative: %s", name)
+	}
+	baseAbs, err := filepath.Abs(base)
+	if err != nil {
+		return "", err
+	}
+	joined := filepath.Clean(filepath.Join(baseAbs, name))
+	if !pathUnderRoot(baseAbs, joined) {
+		return "", fmt.Errorf("path %q escapes %s", name, base)
+	}
+	return joined, nil
+}
+
+func pathUnderRoot(root, path string) bool {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	pathAbs, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(rootAbs), filepath.Clean(pathAbs))
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
+// CopyFile copies srcpath to dstpath using a same-directory temp file and
+// rename so a crash cannot leave a truncated destination.
 func CopyFile(srcpath, dstpath string) (err error) {
 	r, err := os.Open(srcpath)
 	if err != nil {
 		return err
 	}
-	defer r.Close() // ignore error: file was opened read-only.
+	defer r.Close()
 
-	w, err := os.Create(dstpath)
+	dir := filepath.Dir(dstpath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".dnsmgr2-*")
 	if err != nil {
 		return err
 	}
-
+	tmpName := tmp.Name()
 	defer func() {
-		// Report the error, if any, from Close, but do so
-		// only if there isn't already an outgoing error.
-		if c := w.Close(); err == nil {
-			err = c
+		if err != nil {
+			_ = os.Remove(tmpName)
 		}
 	}()
 
-	_, err = io.Copy(w, r)
-	return err
+	if _, err = io.Copy(tmp, r); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	if err = os.Chmod(tmpName, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, dstpath)
 }
 
-// calculate sha256sum of a file
-// if file does not exist, or other errors opening file, return nil
-func Sha256sum(filename string) []byte {
+func Sha256sum(filename string) ([]byte, error) {
 	f, err := os.Open(filename)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer f.Close()
 
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return nil
+		return nil, err
 	}
-	sum := h.Sum(nil)
-	return sum
+	return h.Sum(nil), nil
 }
 
-// Compare two files by calculating SHA256 checksums
-// returns true if the are equal
-func Sha256sumEqual(filename1 string, filename2 string) bool {
-	return bytes.Equal(Sha256sum(filename1), Sha256sum(filename2))
+// FilesEqual reports whether src and dst have the same SHA-256.
+// A missing dst is not an error: equal is false (caller should copy).
+// Other read errors on either file are returned.
+func FilesEqual(src, dst string) (bool, error) {
+	a, err := Sha256sum(src)
+	if err != nil {
+		return false, err
+	}
+	b, err := Sha256sum(dst)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return bytes.Equal(a, b), nil
 }
 
-// Get new serial number
-// We use a sqlite database for this, one row per domain
-// If next is true, increment serial and save it
-func GetSerial(dbfile string, zonename string, next bool) (string, error) {
+// GetSerial returns the YYYYMMDDnn serial for zonename.
+// If next is true, the stored serial is incremented and saved.
+func GetSerial(db *gorm.DB, zonename string, next bool) (string, error) {
+	if db == nil {
+		return "", errors.New("database is not open")
+	}
 	var zone models.Zone
 
 	dateFormat := "20060102"
 	t := time.Now()
 
-	db, err := ConnectMigrate(dbfile)
-	if err != nil {
-		return "", err
-	}
-
-	// Get current serial
 	res := db.Where("name = ?", zonename).First(&zone)
 	if res.Error != nil {
-		// No serial, create one
 		zone.Name = zonename
 		zone.SerialDate = t.Format(dateFormat)
 		zone.SerialSeq = 0
@@ -185,14 +312,10 @@ func GetSerial(dbfile string, zonename string, next bool) (string, error) {
 	}
 
 	if next {
-		// Get next serial number
-
 		if zone.SerialDate < t.Format(dateFormat) {
-			// Serial date is in the past, create one for today
 			zone.SerialDate = t.Format(dateFormat)
 			zone.SerialSeq = 0
 		} else {
-			// Increase current serial
 			if zone.SerialSeq >= 99 {
 				zone.SerialSeq = 0
 				t = t.AddDate(0, 0, 1)
@@ -202,7 +325,6 @@ func GetSerial(dbfile string, zonename string, next bool) (string, error) {
 			}
 		}
 
-		// Update new serial
 		res = db.Save(&zone)
 		if res.Error != nil {
 			return "", res.Error
@@ -210,6 +332,35 @@ func GetSerial(dbfile string, zonename string, next bool) (string, error) {
 	}
 
 	return fmt.Sprintf("%s%02d", zone.SerialDate, zone.SerialSeq), nil
+}
+
+type fileLock struct {
+	f *os.File
+}
+
+func AcquireLock(lockPath string) (*fileLock, error) {
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("another dnsmgr2 process is running (lock %s): %w", lockPath, err)
+	}
+	return &fileLock{f: f}, nil
+}
+
+func (l *fileLock) Close() error {
+	if l == nil || l.f == nil {
+		return nil
+	}
+	_ = unix.Flock(int(l.f.Fd()), unix.LOCK_UN)
+	err := l.f.Close()
+	l.f = nil
+	return err
 }
 
 func ReverseIpv4Addr(addr netip.Addr) string {

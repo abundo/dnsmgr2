@@ -25,16 +25,16 @@ func main() {
 				Use:   "load",
 				Short: "Load and print records",
 				RunFuncE: func(p *cmdbase.Params, cmd *cobra.Command, args []string) error {
+					cmdbase.ApplyParams(p)
 					dm, err := dnsmgr.NewDnsManager(p.Config)
 					if err != nil {
 						return err
 					}
-					err = dm.Load()
-					if err != nil {
+					if err := dm.Load(); err != nil {
 						return err
 					}
 					dm.PrintRecords()
-					return err
+					return nil
 				},
 			},
 
@@ -42,12 +42,12 @@ func main() {
 				Use:   "restart",
 				Short: "Restart services",
 				RunFuncE: func(p *cmdbase.Params, cmd *cobra.Command, args []string) error {
+					cmdbase.ApplyParams(p)
 					dm, err := dnsmgr.NewDnsManager(p.Config)
 					if err != nil {
 						return err
 					}
-					err = dm.Restart()
-					return err
+					return dm.Restart()
 				},
 			},
 
@@ -55,6 +55,7 @@ func main() {
 				Use:   "show-config",
 				Short: "Show loaded configuration",
 				RunFuncE: func(p *cmdbase.Params, cmd *cobra.Command, args []string) error {
+					cmdbase.ApplyParams(p)
 					dnsmgr.Pprint(p)
 					return nil
 				},
@@ -64,12 +65,12 @@ func main() {
 				Use:   "status",
 				Short: "Show status on services",
 				RunFuncE: func(p *cmdbase.Params, cmd *cobra.Command, args []string) error {
+					cmdbase.ApplyParams(p)
 					dm, err := dnsmgr.NewDnsManager(p.Config)
 					if err != nil {
 						return err
 					}
-					err = dm.Status()
-					return err
+					return dm.Status()
 				},
 			},
 
@@ -77,19 +78,15 @@ func main() {
 				Use:   "sync",
 				Short: "Sync DNS and DHCP records",
 				RunFuncE: func(p *cmdbase.Params, cmd *cobra.Command, args []string) error {
+					cmdbase.ApplyParams(p)
 					dm, err := dnsmgr.NewDnsManager(p.Config)
 					if err != nil {
 						return err
 					}
-					err = dm.Load()
-					if err != nil {
+					if err := dm.Load(); err != nil {
 						return err
 					}
-					err = dm.Sync()
-					if err != nil {
-						return err
-					}
-					return nil
+					return dm.Sync()
 				},
 			},
 		),

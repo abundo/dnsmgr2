@@ -91,3 +91,61 @@ func TestNamedCheckZoneIncludesOutput(t *testing.T) {
 		t.Fatal("error hid named-checkzone output")
 	}
 }
+
+func TestUpdateWritesValidAllowUpdateSyntax(t *testing.T) {
+	if _, err := exec.LookPath("named-checkzone"); err != nil {
+		t.Skip("named-checkzone not installed")
+	}
+
+	dir := t.TempDir()
+	host := &ConfigDNS_HostTemplate{
+		Type:         "isc_bind",
+		Configdir:    dir,
+		IncludeFile:  "named.conf.dnsmgr2",
+		ZonesDir:     dir,
+		Tmpdir:       dir,
+		CmdReloadAll: "true",
+	}
+	zt := ConfigDNS_ZoneTemplate{
+		SOA:            "default_soa",
+		DefaultTTL:     "900",
+		NS:             []ConfigDNS_TemplateNS{{Name: "@", Type: "NS", Value: "ns1.example.net."}},
+		AllowUpdate:    []string{"key dhcp-key"},
+		ParentalAgents: []string{"192.0.2.53"},
+	}
+	soa := ConfigDNS_SOA_template{
+		Mname: "ns1.example.net.", Rname: "hostmaster.example.net.",
+		SerialFormat: "date_serial", Refresh: 36000, Retry: 3600, Expire: 604800, Minimum: 900,
+	}
+	zone := &Zone{
+		Name:       "example.com",
+		ConfigZone: &ConfigZone{Name: "example.com", DnsTemplate: "default_dns"},
+		Host:       host,
+		Records:    RecordsType{{Name: "mail", Type: "A", Value: "192.0.2.10"}},
+	}
+	dns := NewISCBINDManager(DNSManagerOpt{
+		Dbfile: filepath.Join(dir, "dnsmgr2.sqlite"),
+		ConfigDNS: &ConfigDNS{
+			ZoneTemplates: map[string]ConfigDNS_ZoneTemplate{"default_dns": zt},
+			SOATemplates:  map[string]ConfigDNS_SOA_template{"default_soa": soa},
+		},
+		Zones: ZonesType{zone},
+	})
+	if err := dns.PreUpdate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := dns.Update(host, false); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "named.conf.dnsmgr2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	if strings.Contains(text, "{;") {
+		t.Fatalf("invalid BIND brace: %s", text)
+	}
+	if !strings.Contains(text, "allow-update {") || !strings.Contains(text, "parental-agents {") {
+		t.Fatalf("missing clauses: %s", text)
+	}
+}

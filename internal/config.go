@@ -16,6 +16,8 @@ type ConfigSources []ConfigSource
 //   Destination
 // ---------------------------------------------------------------------------
 
+// ConfigDestination is accepted in YAML for compatibility and ignored.
+// Drivers are selected by host_dns_template / host_dhcp_template.
 type ConfigDestination struct {
 	Type string
 	Name string
@@ -29,9 +31,11 @@ type ConfigDestinations []ConfigDestination
 type ConfigDHCPtemplateProtocol struct {
 	Enable      bool
 	Configdir   string
-	IncludeFile string `yaml:"includefile"`
+	IncludeFile string   `yaml:"includefile"`
 	Tmpdir      string
-	CmdRestart  string `yaml:"cmd_restart"`
+	Interfaces  []string `yaml:"interfaces" optional:"true"`
+	CmdRestart  string   `yaml:"cmd_restart"`
+	CmdStatus   string   `yaml:"cmd_status"`
 }
 
 type ConfigHostDHCPtemplate struct {
@@ -67,20 +71,21 @@ type ConfigPrefix struct {
 type ConfigDNS_HostTemplate struct {
 	Type          string
 	Configdir     string
-	IncludeFile   string
-	ZonesDir      string
+	IncludeFile   string `yaml:"includefile"`
+	ZonesDir      string `yaml:"zonesdir"`
 	Zonesfile     string
 	Tmpdir        string
 	CmdReloadAll  string `yaml:"cmd_reload_all"`
 	CmdReloadZone string `yaml:"cmd_reload_zone"`
 	CmdRestart    string `yaml:"cmd_restart"`
+	CmdStatus     string `yaml:"cmd_status"`
 }
 
 // dns->soa_templates:
 type ConfigDNS_SOA_template struct {
 	Mname        string
 	Rname        string
-	SerialFormat string
+	SerialFormat string `yaml:"serial_format"`
 	Refresh      int
 	Retry        int
 	Expire       int
@@ -99,10 +104,10 @@ type ConfigDNS_ZoneTemplate struct {
 	SOA            string
 	DefaultTTL     string `yaml:"default_ttl"`
 	NS             []ConfigDNS_TemplateNS
-	AllowUpdate    []string
-	DNSSECpolicy   string `yaml:"dnssec_policy"`
-	ParentalAgents []string
-	ZoneOptions    []string
+	AllowUpdate    []string `yaml:"allow_update"`
+	DNSSECpolicy   string   `yaml:"dnssec_policy"`
+	ParentalAgents []string `yaml:"parental_agents"`
+	ZoneOptions    []string `yaml:"zone_options"`
 }
 
 type ConfigDNS struct {
@@ -139,5 +144,3 @@ type ConfigRoot struct {
 
 	Dnsmgr2 ConfigDataGroups
 }
-
-var Config ConfigRoot

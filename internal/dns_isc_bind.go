@@ -10,12 +10,16 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
 type DNSManagerOpt struct {
 	Dbfile     string
+	DB         *gorm.DB
 	ConfigDNS  *ConfigDNS
 	ConfigData ConfigDataGroups
 	Zones      ZonesType
@@ -30,6 +34,28 @@ func NewISCBINDManager(p DNSManagerOpt) *DNSManager {
 	manager := new(DNSManager)
 	manager.P = p
 	return manager
+}
+
+func zoneFileRel(host *ConfigDNS_HostTemplate, zoneName string) string {
+	if host == nil || host.Zonesfile == "" || host.Zonesfile == "{zone}" {
+		return zoneName
+	}
+	return strings.ReplaceAll(host.Zonesfile, "{zone}", zoneName)
+}
+
+func (dns *DNSManager) serialDB() (*gorm.DB, error) {
+	if dns.P.DB != nil {
+		return dns.P.DB, nil
+	}
+	if dns.P.Dbfile == "" {
+		return nil, errors.New("dbfile is empty")
+	}
+	db, err := ConnectMigrate(dns.P.Dbfile)
+	if err != nil {
+		return nil, err
+	}
+	dns.P.DB = db
+	return db, nil
 }
 
 func (dns *DNSManager) Reload(zonename string, hostDnsTemplate *ConfigDNS_HostTemplate) error {
@@ -50,7 +76,30 @@ func (dns *DNSManager) Restart(hostDnsTemplate *ConfigDNS_HostTemplate) error {
 
 func (dns *DNSManager) Status(hostDnsTemplate *ConfigDNS_HostTemplate) error {
 	slog.Debug("----- DNSManager.Status() -----")
-	fmt.Printf("ISC BIND status: not implemented\n")
+	if hostDnsTemplate.CmdStatus != "" {
+		return RunCommand(hostDnsTemplate.CmdStatus)
+	}
+	include, err := SafeJoin(hostDnsTemplate.Configdir, hostDnsTemplate.IncludeFile)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(include); err != nil {
+		fmt.Printf("ISC BIND include %s: missing\n", include)
+	} else {
+		fmt.Printf("ISC BIND include %s: present\n", include)
+	}
+	for _, zone := range dns.P.Zones {
+		rel := zoneFileRel(hostDnsTemplate, zone.Name)
+		dst, err := SafeJoin(hostDnsTemplate.ZonesDir, rel)
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(dst); err != nil {
+			fmt.Printf("ISC BIND zone %s (%s): missing\n", zone.Name, dst)
+		} else {
+			fmt.Printf("ISC BIND zone %s (%s): present\n", zone.Name, dst)
+		}
+	}
 	return nil
 }
 
@@ -68,6 +117,9 @@ func (dns *DNSManager) PreUpdate() error {
 		if !ok {
 			return errors.New("unknown SOA template: " + dnsTemplate.SOA)
 		}
+		if SOA.SerialFormat != "" && SOA.SerialFormat != "date_serial" {
+			return fmt.Errorf("unsupported serial_format %q (only date_serial)", SOA.SerialFormat)
+		}
 		zone.SOA = &SOA
 	}
 	return nil
@@ -75,6 +127,9 @@ func (dns *DNSManager) PreUpdate() error {
 
 // Write one zonefile, optionally update SOA serial
 func (dns *DNSManager) UpdateZone(host *ConfigDNS_HostTemplate, zone *Zone, newSerial bool) error {
+	if err := os.MkdirAll(filepath.Dir(zone.TmpFile), 0o755); err != nil {
+		return err
+	}
 	file, err := os.Create(zone.TmpFile)
 	if err != nil {
 		return err
@@ -88,10 +143,13 @@ func (dns *DNSManager) UpdateZone(host *ConfigDNS_HostTemplate, zone *Zone, newS
 	if zone.DNS.DefaultTTL != "" {
 		fmt.Fprintf(file, "$TTL %s\n", zone.DNS.DefaultTTL)
 	}
-	format := fmt.Sprintf("%%-35s  %%5s  %%-8s  %%s\n")
+	format := "%-35s  %5s  %-8s  %s\n"
 
-	// Write SOA
-	serial, err := GetSerial(dns.P.Dbfile, zone.Name, newSerial)
+	db, err := dns.serialDB()
+	if err != nil {
+		return err
+	}
+	serial, err := GetSerial(db, zone.Name, newSerial)
 	if err != nil {
 		return err
 	}
@@ -155,11 +213,15 @@ func namedCheckZone(zonename, filename string) error {
 
 // Write all zone files
 func (dns *DNSManager) Update(host *ConfigDNS_HostTemplate, newSerial bool) error {
-	var err error
 	slog.Debug("----- DNSManager.Update() -----")
 
-	// ISC BIND include file, with zone definition
-	includeFileStr := host.Tmpdir + "/" + host.IncludeFile
+	includeFileStr, err := SafeJoin(host.Tmpdir, host.IncludeFile)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(includeFileStr), 0o755); err != nil {
+		return err
+	}
 	slog.Info("Creating", "include-file", includeFileStr)
 	includeFile, err := os.Create(includeFileStr)
 	if err != nil {
@@ -172,8 +234,15 @@ func (dns *DNSManager) Update(host *ConfigDNS_HostTemplate, newSerial bool) erro
 	fmt.Fprintf(includeFile, "//------------------------------------------------------------\n")
 
 	for _, zone := range dns.P.Zones {
-		zone.DstFile = zone.Host.ZonesDir + "/" + zone.Name
-		zone.TmpFile = zone.Host.Tmpdir + "/" + zone.Name
+		rel := zoneFileRel(host, zone.Name)
+		zone.DstFile, err = SafeJoin(host.ZonesDir, rel)
+		if err != nil {
+			return fmt.Errorf("zone %s dest path: %w", zone.Name, err)
+		}
+		zone.TmpFile, err = SafeJoin(host.Tmpdir, rel)
+		if err != nil {
+			return fmt.Errorf("zone %s tmp path: %w", zone.Name, err)
+		}
 
 		slog.Info("Creating", "zone", zone.TmpFile)
 		fmt.Fprintf(includeFile, "\nzone \"%s\" {\n", zone.Name)
@@ -184,14 +253,14 @@ func (dns *DNSManager) Update(host *ConfigDNS_HostTemplate, newSerial bool) erro
 			fmt.Fprintf(includeFile, "    inline-signing yes;\n")
 		}
 		if len(zone.DNS.ParentalAgents) > 0 {
-			fmt.Fprintf(includeFile, "    parental-agents {;\n")
+			fmt.Fprintf(includeFile, "    parental-agents {\n")
 			for _, parentalAgent := range zone.DNS.ParentalAgents {
 				fmt.Fprintf(includeFile, "        %s;\n", parentalAgent)
 			}
 			fmt.Fprintf(includeFile, "    };\n")
 		}
 		if len(zone.DNS.AllowUpdate) > 0 {
-			fmt.Fprintf(includeFile, "    allow-update {;\n")
+			fmt.Fprintf(includeFile, "    allow-update {\n")
 			for _, allowUpdate := range zone.DNS.AllowUpdate {
 				fmt.Fprintf(includeFile, "        %s;\n", allowUpdate)
 			}
@@ -215,15 +284,23 @@ func (dns *DNSManager) Update(host *ConfigDNS_HostTemplate, newSerial bool) erro
 
 // Copy zonefiles if changed to destination with new serial number and reload zone
 func (dns *DNSManager) UpdateCommit(host *ConfigDNS_HostTemplate) error {
-	var err error
 	var reloadAll bool
 
 	slog.Debug("----- DNSManager.UpdateCommit() -----")
-	tmpIncludeFile := host.Tmpdir + "/" + host.IncludeFile
-	includeFile := host.Configdir + "/" + host.IncludeFile
+	tmpIncludeFile, err := SafeJoin(host.Tmpdir, host.IncludeFile)
+	if err != nil {
+		return err
+	}
+	includeFile, err := SafeJoin(host.Configdir, host.IncludeFile)
+	if err != nil {
+		return err
+	}
 
-	if !Sha256sumEqual(tmpIncludeFile, includeFile) {
-		// configuration has changed, need to reload all. Is this true? check bind documentation
+	equal, err := FilesEqual(tmpIncludeFile, includeFile)
+	if err != nil {
+		return err
+	}
+	if !equal {
 		slog.Info("Copy file", "source", tmpIncludeFile, "dest", includeFile)
 		err = CopyFile(tmpIncludeFile, includeFile)
 		if err != nil {
@@ -237,14 +314,16 @@ func (dns *DNSManager) UpdateCommit(host *ConfigDNS_HostTemplate) error {
 		if host1 == nil {
 			host1 = zone.Host
 		}
-		if !Sha256sumEqual(zone.DstFile, zone.TmpFile) {
-			// Zone content has changed, recreate zonefile with new serial number
+		equal, err := FilesEqual(zone.TmpFile, zone.DstFile)
+		if err != nil {
+			return err
+		}
+		if !equal {
 			slog.Info("Zone content has changed", "zone", zone.Name)
 			err = dns.UpdateZone(host, zone, true)
 			if err != nil {
 				return err
 			}
-			// Copy zone file to correct destionation
 			slog.Info("Copy file", "source", zone.TmpFile, "dest", zone.DstFile)
 			err = CopyFile(zone.TmpFile, zone.DstFile)
 			if err != nil {

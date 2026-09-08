@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -120,9 +121,20 @@ func (k *KeaDHCPManager) Restart(proto *ConfigDHCPtemplateProtocol) error {
 	return RunCommand(proto.CmdRestart)
 }
 
-func (k *KeaDHCPManager) Status() error {
-	slog.Debug("----- KeaDHCPManager.Status() -----")
-	fmt.Printf("ISC Kea status: not implemented\n")
+func (k *KeaDHCPManager) Status(proto *ConfigDHCPtemplateProtocol, family string) error {
+	slog.Debug("----- KeaDHCPManager.Status() -----", "family", family)
+	if proto.CmdStatus != "" {
+		return RunCommand(proto.CmdStatus)
+	}
+	dst, err := SafeJoin(proto.Configdir, proto.IncludeFile)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(dst); err != nil {
+		fmt.Printf("ISC Kea %s config %s: missing\n", family, dst)
+	} else {
+		fmt.Printf("ISC Kea %s config %s: present\n", family, dst)
+	}
 	return nil
 }
 
@@ -155,8 +167,14 @@ func (k *KeaDHCPManager) Update() error {
 	}
 
 	if host.IPv4.Enable {
-		k.v4TmpFile = host.IPv4.Tmpdir + "/" + host.IPv4.IncludeFile
-		k.v4DstFile = host.IPv4.Configdir + "/" + host.IPv4.IncludeFile
+		k.v4TmpFile, err = SafeJoin(host.IPv4.Tmpdir, host.IPv4.IncludeFile)
+		if err != nil {
+			return err
+		}
+		k.v4DstFile, err = SafeJoin(host.IPv4.Configdir, host.IPv4.IncludeFile)
+		if err != nil {
+			return err
+		}
 		body, err := k.buildDhcp4(reservations)
 		if err != nil {
 			return err
@@ -171,8 +189,14 @@ func (k *KeaDHCPManager) Update() error {
 	}
 
 	if host.IPv6.Enable {
-		k.v6TmpFile = host.IPv6.Tmpdir + "/" + host.IPv6.IncludeFile
-		k.v6DstFile = host.IPv6.Configdir + "/" + host.IPv6.IncludeFile
+		k.v6TmpFile, err = SafeJoin(host.IPv6.Tmpdir, host.IPv6.IncludeFile)
+		if err != nil {
+			return err
+		}
+		k.v6DstFile, err = SafeJoin(host.IPv6.Configdir, host.IPv6.IncludeFile)
+		if err != nil {
+			return err
+		}
 		body, err := k.buildDhcp6(reservations)
 		if err != nil {
 			return err
@@ -207,7 +231,11 @@ func (k *KeaDHCPManager) UpdateCommit() error {
 }
 
 func (k *KeaDHCPManager) commitFile(tmp, dst string, proto *ConfigDHCPtemplateProtocol) error {
-	if Sha256sumEqual(tmp, dst) {
+	equal, err := FilesEqual(tmp, dst)
+	if err != nil {
+		return err
+	}
+	if equal {
 		return nil
 	}
 	slog.Info("Copy file", "source", tmp, "dest", dst)
@@ -316,7 +344,7 @@ func (k *KeaDHCPManager) collectReservations() ([]keaReservation, error) {
 func (k *KeaDHCPManager) buildDhcp4(reservations []keaReservation) ([]byte, error) {
 	cfg := keaConfig4{
 		Dhcp4: keaDhcp4{
-			InterfacesConfig: keaInterfacesConfig{Interfaces: []string{"*"}},
+			InterfacesConfig: keaInterfacesConfig{Interfaces: keaInterfaces(&k.P.Host.IPv4)},
 			LeaseDatabase: keaLeaseDatabase{
 				Type:        "memfile",
 				Persist:     true,
@@ -386,7 +414,7 @@ func (k *KeaDHCPManager) buildDhcp4(reservations []keaReservation) ([]byte, erro
 func (k *KeaDHCPManager) buildDhcp6(reservations []keaReservation) ([]byte, error) {
 	cfg := keaConfig6{
 		Dhcp6: keaDhcp6{
-			InterfacesConfig: keaInterfacesConfig{Interfaces: []string{"*"}},
+			InterfacesConfig: keaInterfacesConfig{Interfaces: keaInterfaces(&k.P.Host.IPv6)},
 			LeaseDatabase: keaLeaseDatabase{
 				Type:        "memfile",
 				Persist:     true,
@@ -475,6 +503,13 @@ func (k *KeaDHCPManager) globalOptionData6() []keaOptionData {
 	return opts
 }
 
+func keaInterfaces(proto *ConfigDHCPtemplateProtocol) []string {
+	if proto == nil || len(proto.Interfaces) == 0 {
+		return []string{"*"}
+	}
+	return proto.Interfaces
+}
+
 func validateDHCPProtocol(name string, proto *ConfigDHCPtemplateProtocol) error {
 	if !proto.Enable {
 		return nil
@@ -492,6 +527,9 @@ func validateDHCPProtocol(name string, proto *ConfigDHCPtemplateProtocol) error 
 }
 
 func writeKeaFile(path, family string, body []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	file, err := os.Create(path)
 	if err != nil {
 		return err
@@ -515,7 +553,7 @@ func writeKeaFile(path, family string, body []byte) error {
 func keaCheckConfig(binary, filename string) error {
 	path, err := exec.LookPath(binary)
 	if err != nil {
-		slog.Debug("kea config check skipped", "binary", binary, "reason", "not on PATH")
+		slog.Warn("kea config check skipped; binary not on PATH, generated config not validated", "binary", binary)
 		return nil
 	}
 	cmd := exec.Command(path, "-t", filename)

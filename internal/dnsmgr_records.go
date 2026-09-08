@@ -9,9 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/abundo/dnsmgr2/models"
 	"github.com/seancfoley/ipaddress-go/ipaddr"
 )
 
@@ -65,8 +63,10 @@ func (dm *DnsManager) PrintRecords() {
 // Add a record to a zone
 // Handle generation of reverse DNS records
 func (dm *DnsManager) AddForwardRecord(domain string, record *Record) error {
-	var err error
 	slog.Debug("AddForward", "record", record)
+	if strings.TrimSpace(domain) == "" {
+		return errors.New("record before $DOMAIN")
+	}
 	if record.Forward {
 		var zone *Zone
 		for _, zoneLoop := range *dm.ZonesForward {
@@ -77,18 +77,26 @@ func (dm *DnsManager) AddForwardRecord(domain string, record *Record) error {
 			}
 		}
 		if zone == nil {
-			slog.Error("AddForwardRecord, unknown domain", "domain", domain)
+			return fmt.Errorf("unknown domain %q (missing zone or $DOMAIN)", domain)
 		}
 	}
 	if (record.Type == "A" || record.Type == "AAAA") && record.Reverse {
 		r := new(Record)
 		r.Name = record.Value
 		r.Type = "PTR"
-		r.Value = fmt.Sprintf("%s.%s.", record.Name, domain)
-		err = dm.AddReverseRecord(domain, r)
+		if record.Name == "@" {
+			r.Value = domain + "."
+		} else if strings.HasSuffix(record.Name, ".") {
+			r.Value = record.Name
+		} else {
+			r.Value = fmt.Sprintf("%s.%s.", record.Name, domain)
+		}
+		if err := dm.AddReverseRecord(domain, r); err != nil {
+			return err
+		}
 	}
 
-	return err
+	return nil
 }
 
 func (dm *DnsManager) AddReverseRecord(domain string, record *Record) error {
@@ -100,27 +108,31 @@ func (dm *DnsManager) AddReverseRecord(domain string, record *Record) error {
 
 	switch addr.BitLen() {
 	case 32: // IPv4
-		zone, ok := dm.ZoneReverse4.Lookup(addr) //  .LongestPrefixMatchNode(addr.ToIP())
+		zone, ok := dm.ZoneReverse4.Lookup(addr)
 		if !ok {
-			slog.Debug("AddReverseRecord", "unknown-reverse-zone", record.Name)
+			slog.Warn("no reverse zone for address, skipping PTR", "address", record.Name)
 			return nil
 		}
-		// Reverse name and remove domain part of it
 		name := ReverseIpv4Addr(addr) + ".in-addr.arpa"
-		record.Name = strings.TrimSuffix(name, zone.Name)
-		record.Name = record.Name[:len(record.Name)-1]
+		rel, err := reverseOwnerRelative(name, zone.Name)
+		if err != nil {
+			return err
+		}
+		record.Name = rel
 		zone.Records = append(zone.Records, record)
 
 	case 128: // IPv6
 		zone, ok := dm.ZoneReverse6.Lookup(addr)
 		if !ok {
-			slog.Debug("AddReverseRecord", "unknown-reverse-zone", record.Name)
+			slog.Warn("no reverse zone for address, skipping PTR", "address", record.Name)
 			return nil
 		}
-		// Reverse name and remove domain part of it
 		name := ReverseIpv6Addr(addr) + ".ip6.arpa"
-		record.Name = strings.TrimSuffix(name, zone.Name)
-		record.Name = record.Name[:len(record.Name)-1]
+		rel, err := reverseOwnerRelative(name, zone.Name)
+		if err != nil {
+			return err
+		}
+		record.Name = rel
 		zone.Records = append(zone.Records, record)
 
 	default:
@@ -129,23 +141,31 @@ func (dm *DnsManager) AddReverseRecord(domain string, record *Record) error {
 	return nil
 }
 
+func reverseOwnerRelative(fqdn, zoneName string) (string, error) {
+	fqdn = strings.TrimSuffix(fqdn, ".")
+	zoneName = strings.TrimSuffix(zoneName, ".")
+	if !strings.HasSuffix(fqdn, zoneName) {
+		return "", fmt.Errorf("reverse name %s is not in zone %s", fqdn, zoneName)
+	}
+	rel := strings.TrimSuffix(fqdn, zoneName)
+	rel = strings.TrimSuffix(rel, ".")
+	if rel == "" {
+		return "@", nil
+	}
+	return rel, nil
+}
+
 func (dm *DnsManager) VerifyRecords() error {
 	// Verify correctness of records
 	var err error
 	for _, zone := range *dm.Zones {
 		for _, record := range zone.Records {
-			if len(record.Name) > 255 {
-				return errors.New("record name too long, max 255 characters")
-			}
-
-			// Each section between . cannot exceed 63 characters
-			tmp := strings.Split(record.Name, ".")
-			for _, t := range tmp {
-				if len(t) > 63 {
-
+			if record.Name != "@" {
+				if err := VerifyDnsname(record.Name); err != nil {
+					return err
 				}
 			}
-			if record.TTL < 0 || record.TTL > 65535 {
+			if record.TTL < 0 || record.TTL > maxTTL {
 				return errors.New("record TTL outside allowed values")
 			}
 			switch record.Type {
@@ -199,21 +219,19 @@ func (dm *DnsManager) VerifyRecords() error {
 					return err
 				}
 			case "SRV":
-				// priority (uint16), weight (uint16), port (uint16), target
-				// target must point to one or more A/AAAA, and must not point to CNAME
-				tmp := strings.Split(record.Value, " ")
-				if len(tmp) != 4 {
+				if err = verifySRV(record.Value); err != nil {
+					return err
 				}
 			case "SSHFP":
-				// Publish SSH public host key fingerprint
-
+				if err = verifySSHFP(record.Value); err != nil {
+					return err
+				}
 			case "TLSA":
-				// DANE, X.509 certificate
 				if err = verifyTLSA(record.Value); err != nil {
 					return err
 				}
 			case "TSIG":
-
+				return errors.New("TSIG is not a supported zone record type")
 			case "TXT":
 				// start and end with double quote
 				if err = verifyTXT(record.Value); err != nil {
@@ -222,6 +240,56 @@ func (dm *DnsManager) VerifyRecords() error {
 			default:
 				// accept all unknown type/values
 			}
+		}
+	}
+	return nil
+}
+
+func verifySRV(value string) error {
+	tmp := strings.Fields(value)
+	if len(tmp) != 4 {
+		return errors.New("SRV record must have priority, weight, port and target")
+	}
+	if _, err := strconv.ParseUint(tmp[0], 10, 16); err != nil {
+		return errors.New("SRV priority must be an integer 0-65535")
+	}
+	if _, err := strconv.ParseUint(tmp[1], 10, 16); err != nil {
+		return errors.New("SRV weight must be an integer 0-65535")
+	}
+	if _, err := strconv.ParseUint(tmp[2], 10, 16); err != nil {
+		return errors.New("SRV port must be an integer 0-65535")
+	}
+	if tmp[3] == "." {
+		return nil
+	}
+	return VerifyDnsname(tmp[3])
+}
+
+func verifySSHFP(value string) error {
+	tmp := strings.Fields(value)
+	if len(tmp) != 3 {
+		return errors.New("SSHFP record must have algorithm, fingerprint type and fingerprint")
+	}
+	if _, err := strconv.ParseUint(tmp[0], 10, 8); err != nil {
+		return errors.New("SSHFP algorithm must be an integer 0-255")
+	}
+	fptype, err := strconv.ParseUint(tmp[1], 10, 8)
+	if err != nil {
+		return errors.New("SSHFP fingerprint type must be an integer 0-255")
+	}
+	fp := strings.NewReplacer(":", "", ".", "").Replace(tmp[2])
+	cert, err := hex.DecodeString(fp)
+	if err != nil {
+		return errors.New("SSHFP fingerprint must be hexadecimal")
+	}
+	switch fptype {
+	case 1:
+		if len(cert) != 20 {
+			return errors.New("SSHFP SHA-1 fingerprint must be 20 bytes (40 hex characters)")
+		}
+	case 2:
+		if len(cert) != 32 {
+			return errors.New("SSHFP SHA-256 fingerprint must be 32 bytes (64 hex characters)")
 		}
 	}
 	return nil
@@ -412,59 +480,6 @@ func verifyTXT(value string) error {
 //   Other
 // ---------------------------------------------------------------------------
 
-// Get new serial number
-// We use a sqlite database for this, one row per domain
-// If install is true, increment serial and save it
-func (dm *DnsManager) GetSerial(zonename string, next bool) (string, error) {
-	var err error
-	var zone models.Zone
-
-	dateFormat := "20060102"
-
-	if dm.DB == nil {
-		dm.DB, err = ConnectMigrate(dm.C.Dbfile)
-		if err != nil {
-			return "", err
-		}
-	}
-	// Default serial
-	t := time.Now()
-	serialDate := t.Format(dateFormat)
-	serialSeq := 0
-
-	res := dm.DB.Where("name = ?", zonename).First(&zone)
-	if res.Error == nil {
-		if !next {
-			// We only want current serial number
-			return fmt.Sprintf("%s%02d", zone.SerialDate, zone.SerialSeq), nil
-		}
-		if zone.SerialDate < serialDate {
-			// Stored date less than todays, use todays
-		} else {
-			if zone.SerialSeq >= 99 {
-				zone.SerialSeq = 0
-				t = t.AddDate(0, 0, 1)
-				zone.SerialDate = t.Format(dateFormat)
-			} else {
-				zone.SerialSeq++
-			}
-			serialDate = zone.SerialDate
-			serialSeq = zone.SerialSeq
-		}
-	}
-
-	// Save/update new serial
-	zone.Name = zonename
-	zone.SerialDate = serialDate
-	zone.SerialSeq = serialSeq
-	res = dm.DB.Save(&zone)
-	if res.Error != nil {
-		return "", res.Error
-	}
-
-	return fmt.Sprintf("%s%02d", zone.SerialDate, zone.SerialSeq), nil
-}
-
 // Load all sources
 func (dm *DnsManager) Load() error {
 	if err := dm.LoadZones(); err != nil {
@@ -503,9 +518,4 @@ func (dm *DnsManager) Load() error {
 		}
 	}
 	return nil
-}
-
-// Get next serial number
-func (dm *DnsManager) NextGetSerial(zonename string, install bool) (string, error) {
-	return "", nil
 }

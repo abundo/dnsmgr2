@@ -143,3 +143,95 @@ test                                    A       192.0.2.4 ; mac=not-a-mac
 		t.Errorf("error = %v, want MAC", err)
 	}
 }
+
+func TestSrcfileLoadUnknownDomain(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "records")
+	content := `$DOMAIN other.com
+
+test                                    A       192.0.2.4
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dm := testDnsManager("example.com")
+	err := SrcfileLoad(dm, path)
+	if err == nil || !strings.Contains(err.Error(), "unknown domain") {
+		t.Fatalf("error = %v, want unknown domain", err)
+	}
+}
+
+func TestSrcfileLoadBeforeDomain(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "records")
+	if err := os.WriteFile(path, []byte("test A 192.0.2.4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dm := testDnsManager("example.com")
+	err := SrcfileLoad(dm, path)
+	if err == nil || !strings.Contains(err.Error(), "$DOMAIN") {
+		t.Fatalf("error = %v, want $DOMAIN", err)
+	}
+}
+
+func TestSrcfileIncludeJailAndCycle(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(outside, []byte("$DOMAIN example.com\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "records")
+	if err := os.WriteFile(path, []byte("$INCLUDE "+outside+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dm := testDnsManager("example.com")
+	err := SrcfileLoad(dm, path)
+	if err == nil || !strings.Contains(err.Error(), "outside") {
+		t.Fatalf("error = %v, want outside", err)
+	}
+
+	a := filepath.Join(dir, "a")
+	b := filepath.Join(dir, "b")
+	if err := os.WriteFile(a, []byte("$INCLUDE b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, []byte("$INCLUDE a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = SrcfileLoad(dm, a)
+	if err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("error = %v, want cycle", err)
+	}
+}
+
+func TestSrcfileIncludeRelative(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "zones")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inc := filepath.Join(sub, "extra")
+	if err := os.WriteFile(inc, []byte("mail A 192.0.2.10\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "records")
+	content := `$DOMAIN example.com
+$INCLUDE zones/extra
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dm := testDnsManager("example.com")
+	if err := SrcfileLoad(dm, path); err != nil {
+		t.Fatalf("SrcfileLoad = %v", err)
+	}
+	var found bool
+	for _, r := range (*dm.Zones)[0].Records {
+		if r.Name == "mail" && r.Type == "A" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("included record missing")
+	}
+}
