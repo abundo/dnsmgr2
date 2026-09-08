@@ -16,6 +16,7 @@ type resolvedPrefix struct {
 	RangeEnd   netip.Addr
 	Gateway    netip.Addr
 	SubnetMask string // IPv4 dotted-quad; empty for IPv6
+	DNSServers []string
 }
 
 func resolvePrefix(cfg ConfigPrefix) (*resolvedPrefix, error) {
@@ -78,6 +79,17 @@ func resolvePrefix(cfg ConfigPrefix) (*resolvedPrefix, error) {
 		}
 	} else if strings.TrimSpace(cfg.SubnetMask) != "" {
 		return nil, fmt.Errorf("DHCP prefix %s subnet_mask is only valid for IPv4", cfg.Name)
+	}
+
+	for i, s := range cfg.DNSServers {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, err := netip.ParseAddr(s); err != nil {
+			return nil, fmt.Errorf("DHCP prefix %s dns_servers[%d] is not an IP address: %s", cfg.Name, i, s)
+		}
+		rp.DNSServers = append(rp.DNSServers, s)
 	}
 
 	return rp, nil

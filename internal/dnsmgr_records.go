@@ -478,6 +478,12 @@ func (dm *DnsManager) Load() error {
 			if err != nil {
 				return err
 			}
+		case "json":
+			slog.Info("Load records", "source-json", source.Name)
+			err := SrcJSONLoad(dm, source.Name)
+			if err != nil {
+				return err
+			}
 		default:
 			return errors.New("unknown source type: " + source.Type)
 		}

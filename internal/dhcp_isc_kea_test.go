@@ -103,6 +103,39 @@ func TestKeaBuildDhcp4ReservationAndDefaults(t *testing.T) {
 	}
 }
 
+func TestKeaPrefixDNSServersOverride(t *testing.T) {
+	dir := t.TempDir()
+	k := NewKeaDHCPManager(KeaDHCPManagerOpt{
+		ConfigDHCP: &ConfigDHCP{
+			DomainName: "example.com",
+			DNSServers: []string{"192.0.2.53"},
+		},
+		Host: testKeaHost(dir),
+		Prefixes: []ConfigPrefix{
+			{Name: "192.0.2.0/24", DNSServers: []string{"198.51.100.53"}},
+		},
+	})
+	if err := k.Update(); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "kea-dhcp4.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonStart := strings.Index(string(body), "{")
+	var cfg keaConfig4
+	if err := json.Unmarshal([]byte(string(body)[jsonStart:]), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, o := range cfg.Dhcp4.Subnet4[0].OptionData {
+		got[o.Name] = o.Data
+	}
+	if got["domain-name-servers"] != "198.51.100.53" {
+		t.Errorf("prefix dns = %#v", got)
+	}
+}
+
 func TestKeaReservationIPOutsidePrefix(t *testing.T) {
 	dir := t.TempDir()
 	dm := testDnsManager("example.com")

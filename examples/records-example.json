@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "domains": [
+    {
+      "name": "example.com",
+      "records": [
+        {"name": "ns1", "type": "A", "value": "192.0.2.53"},
+        {"name": "ns2", "type": "A", "value": "192.0.2.54"},
+        {"name": "test", "type": "A", "value": "192.0.2.4", "mac": "02:00:00:00:00:04"},
+        {"name": "mail", "type": "A", "value": "192.0.2.10"},
+        {"name": "@", "type": "MX", "value": "10 mail"},
+        {"name": "@", "type": "TXT", "value": "v=spf1 mx -all"},
+        {"name": "_443._tcp.www", "type": "TLSA", "value": "3 1 1 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+      ]
+    }
+  ]
+}

@@ -4,6 +4,7 @@ package internal
 //   Source
 // ---------------------------------------------------------------------------
 
+// ConfigSource is a records input. Type is "file" (text) or "json".
 type ConfigSource struct {
 	Type string
 	Name string
@@ -48,12 +49,14 @@ type ConfigDHCP struct {
 // ConfigPrefix is a DHCP subnet. Name is a CIDR prefix (192.168.1.0/24).
 // Range is an optional pool (192.168.1.100-192.168.1.200). Gateway defaults
 // to the first usable address in the prefix. SubnetMask defaults to the
-// mask implied by the prefix length (IPv4 only).
+// mask implied by the prefix length (IPv4 only). DNSServers, when set,
+// override dhcp.dns_servers for this subnet only.
 type ConfigPrefix struct {
 	Name       string
 	Range      string
 	Gateway    string
-	SubnetMask string `yaml:"subnet_mask"`
+	SubnetMask string   `yaml:"subnet_mask"`
+	DNSServers []string `yaml:"dns_servers"`
 }
 
 // ---------------------------------------------------------------------------

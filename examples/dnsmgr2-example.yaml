@@ -9,6 +9,9 @@ dbfile: /var/lib/dnsmgr2/dnsmgr2.sqlite
 sources:
     - type: file
       name: /etc/dnsmgr2/records
+    # factum2-dns writes JSON instead:
+    # - type: json
+    #   name: /etc/dnsmgr2/records
 
 #----------------------------------------------------------------------
 # List of Destinations, where to write data
@@ -94,6 +97,7 @@ dnsmgr2:
             range: 192.0.2.100-192.0.2.200
             # gateway defaults to the first usable address (192.0.2.1)
             # subnet_mask defaults to 255.255.255.0
+            # dns_servers: override dhcp.dns_servers for this subnet only
       zones:
           - name: example.com
             type: forward

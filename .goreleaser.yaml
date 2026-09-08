@@ -29,7 +29,7 @@ archives:
 
 nfpms:
   - maintainer: Anders Lowinger <anders@abundo.se>
-    description: Tool to manage ISC BIND from a text records file.
+    description: Tool to manage ISC BIND and ISC Kea from a records file (text or JSON).
     homepage: https://github.com/abundo/dnsmgr2
     license: GPL-3.0-or-later
     formats:
@@ -43,6 +43,8 @@ nfpms:
         dst: /usr/share/doc/dnsmgr2/dnsmgr2-example.yaml
       - src: examples/records-example
         dst: /usr/share/doc/dnsmgr2/records-example
+      - src: examples/records-example.json
+        dst: /usr/share/doc/dnsmgr2/records-example.json
       - dst: /etc/dnsmgr2
         type: dir
       - dst: /var/lib/dnsmgr2

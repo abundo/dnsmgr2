@@ -70,6 +70,7 @@ type keaSubnet6 struct {
 	ID           int               `json:"id"`
 	Subnet       string            `json:"subnet"`
 	Pools        []keaPool         `json:"pools,omitempty"`
+	OptionData   []keaOptionData   `json:"option-data,omitempty"`
 	Reservations []keaReservation6 `json:"reservations,omitempty"`
 }
 
@@ -367,6 +368,12 @@ func (k *KeaDHCPManager) buildDhcp4(reservations []keaReservation) ([]byte, erro
 				Data: p.SubnetMask,
 			})
 		}
+		if len(p.DNSServers) > 0 {
+			sub.OptionData = append(sub.OptionData, keaOptionData{
+				Name: "domain-name-servers",
+				Data: strings.Join(p.DNSServers, ", "),
+			})
+		}
 		if res := byPrefix[p.Prefix.String()]; len(res) > 0 {
 			sub.Reservations = res
 		}
@@ -418,6 +425,12 @@ func (k *KeaDHCPManager) buildDhcp6(reservations []keaReservation) ([]byte, erro
 			sub.Pools = []keaPool{{
 				Pool: p.RangeStart.String() + " - " + p.RangeEnd.String(),
 			}}
+		}
+		if len(p.DNSServers) > 0 {
+			sub.OptionData = append(sub.OptionData, keaOptionData{
+				Name: "dns-servers",
+				Data: strings.Join(p.DNSServers, ", "),
+			})
 		}
 		if res := byPrefix[p.Prefix.String()]; len(res) > 0 {
 			sub.Reservations = res

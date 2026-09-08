@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/abundo/dnsmgr2/actions/workflows/ci.yml/badge.svg)](https://github.com/abundo/dnsmgr2/actions/workflows/ci.yml)
 
-Tool to manage ISC BIND and ISC Kea from a text records file.
+Tool to manage ISC BIND and ISC Kea from a records file (text or JSON).
 
 It writes forward and reverse zone files, keeps SOA serial numbers in a
 sqlite3 database, and reloads BIND when a zone changes. When DHCP is
@@ -65,7 +65,7 @@ the same way zone files are.
 
 See `examples/dnsmgr2-example.yaml`. The main pieces:
 
-- `sources` — records file (`type: file`)
+- `sources` — records file (`type: file` text, or `type: json` for factum2)
 - `dns.host_templates` — BIND paths and reload/restart commands
 - `dns.soa_templates` — SOA values
 - `dns.zone_templates` — default TTL, NS records, and which SOA template
@@ -81,7 +81,8 @@ an SOA template.
 Each DHCP prefix is a CIDR (`name: 192.0.2.0/24`). Optional `range` is
 the dynamic pool (`192.0.2.100-192.0.2.200`). `gateway` defaults to the
 first usable address in the prefix (network + 1). `subnet_mask` defaults
-to the mask implied by the prefix length.
+to the mask implied by the prefix length. Optional `dns_servers` overrides
+the global `dhcp.dns_servers` for that subnet.
 
 ## Records file
 
@@ -118,6 +119,36 @@ reservation for that address. MAC forms `aa:bb:cc:dd:ee:ff`,
 If a nameserver in the zone template is inside the zone (for example
 `ns1.example.com` in `example.com`), it must have an A or AAAA record.
 BIND's `named-checkzone` rejects the zone otherwise.
+
+## JSON records file
+
+`sources[].type: json` is the machine transfer format (`factum2-dns`
+writes it). See `examples/records-example.json`. TXT `value` is the
+unquoted string; dnsmgr2 quotes it when writing BIND zone files. DHCP
+reservations are a `mac` field on A/AAAA records, not a comment.
+
+    sources:
+        - type: json
+          name: /etc/dnsmgr2/records
+
+    {
+      "version": 1,
+      "domains": [
+        {
+          "name": "example.com",
+          "records": [
+            {"name": "test", "type": "A", "value": "192.0.2.4", "mac": "02:00:00:00:00:04"},
+            {"name": "@", "type": "TXT", "value": "v=spf1 mx -all"}
+          ]
+        }
+      ]
+    }
+
+Optional per domain: `forward`, `reverse4`, `reverse6` (default true).
+Optional per record: `ttl`, `reverse`. Unknown `version` values are
+rejected; omitted version is 1.
+
+Keep `type: file` for the human-edited text format above.
 
 ## Commands
 
