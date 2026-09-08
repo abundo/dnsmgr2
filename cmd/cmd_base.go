@@ -10,10 +10,14 @@ import (
 )
 
 type Params struct {
-	ConfigFile string            `configfile:"true" optional:"true" default:"/etc/dnsmgr2/dnsmgr2.yaml"`
-	Debug      bool              `descr:"Enable verbose debug logging" short:"d"`
-	Loglevel   string            `descr:"Set log level" alts:"error,warning,info,debug" default:"info"`
-	Config     dnsmgr.ConfigRoot `yaml:",inline"`
+	ConfigFile string `configfile:"true" optional:"true" default:"/etc/dnsmgr2/dnsmgr2.yaml"`
+	Debug      bool   `descr:"Enable verbose debug logging" short:"d"`
+	Loglevel   string `descr:"Set log level" alts:"error,warning,info,debug" default:"info"`
+	// Config is YAML-only. boa:"ignore" keeps nested slices such as
+	// dhcp.dns_servers from becoming required CLI flags (missing
+	// config-dhcpdns-servers) when the key is omitted; prefixes may
+	// supply per-subnet servers instead.
+	Config dnsmgr.ConfigRoot `yaml:",inline" boa:"ignore"`
 }
 
 // osExit is os.Exit, swapped in tests so Run can be exercised without

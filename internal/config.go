@@ -41,8 +41,8 @@ type ConfigHostDHCPtemplate struct {
 }
 
 type ConfigDHCP struct {
-	DomainName    string                            `yaml:"domain_name"`
-	DNSServers    []string                          `yaml:"dns_servers"`
+	DomainName    string                            `yaml:"domain_name" optional:"true"`
+	DNSServers    []string                          `yaml:"dns_servers" optional:"true"`
 	HostTemplates map[string]ConfigHostDHCPtemplate `yaml:"host_templates"`
 }
 
@@ -56,7 +56,7 @@ type ConfigPrefix struct {
 	Range      string
 	Gateway    string
 	SubnetMask string   `yaml:"subnet_mask"`
-	DNSServers []string `yaml:"dns_servers"`
+	DNSServers []string `yaml:"dns_servers" optional:"true"`
 }
 
 // ---------------------------------------------------------------------------

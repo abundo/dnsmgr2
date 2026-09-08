@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 func captureStderr(t *testing.T, fn func()) string {
@@ -121,5 +123,109 @@ func TestRun_HelpStillPrints(t *testing.T) {
 
 	if !strings.Contains(stdout, "Available Commands") {
 		t.Fatalf("stdout = %q, want help text", stdout)
+	}
+}
+
+func TestParamsLoadYAMLWithoutGlobalDHCPDNSServers(t *testing.T) {
+	boa.RegisterConfigFormat(".yaml", yaml.Unmarshal)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dnsmgr2.yaml")
+	const body = `
+dbfile: /tmp/dnsmgr2.sqlite
+sources:
+  - type: json
+    name: /tmp/records
+destinations:
+  - type: dhcp_isc_kea
+    name: isc_kea
+dhcp:
+  domain_name: lab.example
+  host_templates:
+    isc_kea:
+      type: isc_kea
+      ipv4:
+        enable: true
+        configdir: /etc/kea
+        includefile: kea-dhcp4.conf
+        tmpdir: /tmp
+        cmd_restart: "true"
+dnsmgr2:
+  - host_dhcp_template: isc_kea
+    prefixes:
+      - name: 192.0.2.0/24
+        dns_servers:
+          - 192.0.2.53
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var loaded *Params
+	cmd := boa.CmdT[Params]{
+		Use:     "load",
+		RawArgs: []string{"--config-file", path},
+		RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error {
+			loaded = p
+			return nil
+		},
+	}
+	if err := cmd.ToCobra().Execute(); err != nil {
+		t.Fatalf("load yaml without dhcp.dns_servers: %v", err)
+	}
+	if loaded == nil {
+		t.Fatal("params not loaded")
+	}
+	if loaded.Config.DHCP.DomainName != "lab.example" {
+		t.Errorf("domain_name = %q", loaded.Config.DHCP.DomainName)
+	}
+	if len(loaded.Config.DHCP.DNSServers) != 0 {
+		t.Errorf("dns_servers = %#v, want empty", loaded.Config.DHCP.DNSServers)
+	}
+	if len(loaded.Config.Dnsmgr2) != 1 || len(loaded.Config.Dnsmgr2[0].Prefixes) != 1 {
+		t.Errorf("prefixes = %#v", loaded.Config.Dnsmgr2)
+	}
+}
+
+func TestParamsLoadYAMLWithoutDHCPSection(t *testing.T) {
+	boa.RegisterConfigFormat(".yaml", yaml.Unmarshal)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dnsmgr2.yaml")
+	const body = `
+dbfile: /tmp/dnsmgr2.sqlite
+sources:
+  - type: json
+    name: /tmp/records
+destinations:
+  - type: dns_isc_bind
+    name: isc_bind
+dns:
+  host_templates:
+    isc_bind:
+      type: isc_bind
+      configdir: /etc/bind
+      includefile: named.conf.dnsmgr2
+      zonesdir: /var/lib/bind
+      zonesfile: "{zone}"
+      tmpdir: /tmp
+dnsmgr2:
+  - host_dns_template: isc_bind
+    zones:
+      - name: lab.example
+        type: forward
+        dns_template: default_dns
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := boa.CmdT[Params]{
+		Use:     "load",
+		RawArgs: []string{"--config-file", path},
+		RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error {
+			return nil
+		},
+	}
+	if err := cmd.ToCobra().Execute(); err != nil {
+		t.Fatalf("load yaml without dhcp section: %v", err)
 	}
 }
