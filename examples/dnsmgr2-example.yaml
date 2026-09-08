@@ -65,16 +65,16 @@ dhcp:
             ipv4:
                 enable: true
                 configdir: /etc/kea
-                includefile: kea-dhcp4.conf
+                # JSON array of subnets; include from /etc/kea/kea-dhcp4.conf:
+                #   "subnet4": <?include "/etc/kea/kea-dhcp4.dnsmgr2.json"?>
+                includefile: kea-dhcp4.dnsmgr2.json
                 tmpdir: /var/lib/dnsmgr2
-                # default is all interfaces; set this to limit where Kea listens
-                # interfaces: ["eth0"]
                 cmd_restart: "systemctl restart kea-dhcp4-server"
                 cmd_status: "systemctl is-active kea-dhcp4-server"
             ipv6:
                 enable: false
                 configdir: /etc/kea
-                includefile: kea-dhcp6.conf
+                includefile: kea-dhcp6.dnsmgr2.json
                 tmpdir: /var/lib/dnsmgr2
                 cmd_restart: "systemctl restart kea-dhcp6-server"
                 cmd_status: "systemctl is-active kea-dhcp6-server"

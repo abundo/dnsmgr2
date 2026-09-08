@@ -6,14 +6,15 @@ Tool to manage ISC BIND and ISC Kea from a records file (text or JSON).
 
 It writes forward and reverse zone files, keeps SOA serial numbers in a
 sqlite3 database, and reloads BIND when a zone changes. When DHCP is
-configured it writes Kea DHCPv4/DHCPv6 config (subnets, pools, and host
-reservations) and restarts Kea when that config changes.
+configured it writes a Kea subnet include (pools and host reservations)
+and restarts Kea when that file changes.
 
 ## Installation
 
 Requires BIND's `named-checkzone` on `PATH` (Debian/Ubuntu: `bind9-utils`).
 If DHCP is enabled and `kea-dhcp4` / `kea-dhcp6` are on `PATH`, `sync`
-also runs `kea-dhcp4 -t` / `kea-dhcp6 -t` on the generated config.
+also runs `kea-dhcp4 -t` / `kea-dhcp6 -t` on a stub config that includes
+the generated subnet file.
 `sync` writes under `/etc/bind`, `/var/lib/bind`, and (when DHCP is
 configured) `/etc/kea`, so run it as root.
 
@@ -56,12 +57,24 @@ Then:
 
 Later syncs update only changed zones and reload them with `rndc`.
 
-When `host_dhcp_template` is set, `sync` writes a complete Kea JSON
-config (the host template `includefile`, typically `/etc/kea/kea-dhcp4.conf`)
+When `host_dhcp_template` is set, `sync` writes a JSON array of subnets
+(the host template `includefile`, typically `/etc/kea/kea-dhcp4.dnsmgr2.json`)
 and restarts Kea if it changed. That file is overwritten on each change,
-the same way zone files are. By default Kea is configured to listen on
-all interfaces (`*`); set `interfaces` on the IPv4/IPv6 host template to
-restrict that.
+the same way zone files are. Kea does not load it yet.
+
+Once, add this include inside the `"Dhcp4"` object in `/etc/kea/kea-dhcp4.conf`
+(and `"subnet6"` / `"Dhcp6"` for IPv6):
+
+    "subnet4": <?include "/etc/kea/kea-dhcp4.dnsmgr2.json"?>
+
+Do not also set `subnet4` in the main file; dnsmgr2 owns that list.
+Interfaces, lease-database, timers, hooks, and logging stay in the main
+Kea config.
+
+Then:
+
+    sudo kea-dhcp4 -t /etc/kea/kea-dhcp4.conf
+    sudo systemctl restart kea-dhcp4-server
 
 ## Configuration
 
@@ -74,8 +87,9 @@ See `examples/dnsmgr2-example.yaml`. The main pieces:
 - `dns.zone_templates` — default TTL, NS records, and which SOA template
   to use
 - `dhcp.domain_name` / `dhcp.dns_servers` — global DHCP options
-- `dhcp.host_templates` — Kea paths, optional `interfaces`, and
-  restart/status commands (`ipv4` / `ipv6`)
+- `dhcp.host_templates` — Kea paths and restart/status commands
+  (`ipv4` / `ipv6`). `includefile` is a JSON array of subnets, included
+  from the main Kea config; it is not the main config file.
 - `dnsmgr2` — which host templates to use, DHCP prefixes, and the zones
   to manage (`forward`, `reverse4`, `reverse6`)
 
@@ -190,8 +204,8 @@ so two processes cannot rewrite configs at once.
 
 Generated files are installed with a same-directory temp file plus
 rename. `named-checkzone` must succeed before a zone is installed. If
-`kea-dhcp4` / `kea-dhcp6` are not on `PATH`, Kea config is still written
-but not syntax-checked (a warning is logged).
+`kea-dhcp4` / `kea-dhcp6` are not on `PATH`, the Kea subnet include is
+still written but not syntax-checked (a warning is logged).
 
 ## Development
 

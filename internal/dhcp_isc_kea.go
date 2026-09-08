@@ -3,6 +3,12 @@ package internal
 //
 // ISC Kea DHCP driver
 //
+// Writes a JSON array of subnets (pools, per-subnet options, reservations)
+// to the host template includefile. The operator's main Kea config must
+// include that file as the subnet4 / subnet6 value:
+//
+//	"subnet4": <?include "/etc/kea/kea-dhcp4.dnsmgr2.json"?>
+//
 
 import (
 	"encoding/json"
@@ -75,41 +81,6 @@ type keaSubnet6 struct {
 	Reservations []keaReservation6 `json:"reservations,omitempty"`
 }
 
-type keaInterfacesConfig struct {
-	Interfaces []string `json:"interfaces"`
-}
-
-type keaLeaseDatabase struct {
-	Type        string `json:"type"`
-	Persist     bool   `json:"persist"`
-	Name        string `json:"name"`
-	LFCInterval int    `json:"lfc-interval"`
-}
-
-type keaDhcp4 struct {
-	InterfacesConfig keaInterfacesConfig `json:"interfaces-config"`
-	LeaseDatabase    keaLeaseDatabase    `json:"lease-database"`
-	ValidLifetime    int                 `json:"valid-lifetime"`
-	OptionData       []keaOptionData     `json:"option-data,omitempty"`
-	Subnet4          []keaSubnet4        `json:"subnet4"`
-}
-
-type keaDhcp6 struct {
-	InterfacesConfig keaInterfacesConfig `json:"interfaces-config"`
-	LeaseDatabase    keaLeaseDatabase    `json:"lease-database"`
-	ValidLifetime    int                 `json:"valid-lifetime"`
-	OptionData       []keaOptionData     `json:"option-data,omitempty"`
-	Subnet6          []keaSubnet6        `json:"subnet6"`
-}
-
-type keaConfig4 struct {
-	Dhcp4 keaDhcp4 `json:"Dhcp4"`
-}
-
-type keaConfig6 struct {
-	Dhcp6 keaDhcp6 `json:"Dhcp6"`
-}
-
 type keaReservation struct {
 	MAC      string
 	IP       netip.Addr
@@ -131,9 +102,9 @@ func (k *KeaDHCPManager) Status(proto *ConfigDHCPtemplateProtocol, family string
 		return err
 	}
 	if _, err := os.Stat(dst); err != nil {
-		fmt.Printf("ISC Kea %s config %s: missing\n", family, dst)
+		fmt.Printf("ISC Kea %s include %s: missing\n", family, dst)
 	} else {
-		fmt.Printf("ISC Kea %s config %s: present\n", family, dst)
+		fmt.Printf("ISC Kea %s include %s: present\n", family, dst)
 	}
 	return nil
 }
@@ -183,7 +154,7 @@ func (k *KeaDHCPManager) Update() error {
 		if err := writeKeaFile(k.v4TmpFile, "DHCPv4", body); err != nil {
 			return err
 		}
-		if err := keaCheckConfig("kea-dhcp4", k.v4TmpFile); err != nil {
+		if err := keaCheckConfig("kea-dhcp4", k.v4TmpFile, "Dhcp4", "subnet4"); err != nil {
 			return err
 		}
 	}
@@ -205,7 +176,7 @@ func (k *KeaDHCPManager) Update() error {
 		if err := writeKeaFile(k.v6TmpFile, "DHCPv6", body); err != nil {
 			return err
 		}
-		if err := keaCheckConfig("kea-dhcp6", k.v6TmpFile); err != nil {
+		if err := keaCheckConfig("kea-dhcp6", k.v6TmpFile, "Dhcp6", "subnet6"); err != nil {
 			return err
 		}
 	}
@@ -342,21 +313,6 @@ func (k *KeaDHCPManager) collectReservations() ([]keaReservation, error) {
 }
 
 func (k *KeaDHCPManager) buildDhcp4(reservations []keaReservation) ([]byte, error) {
-	cfg := keaConfig4{
-		Dhcp4: keaDhcp4{
-			InterfacesConfig: keaInterfacesConfig{Interfaces: keaInterfaces(&k.P.Host.IPv4)},
-			LeaseDatabase: keaLeaseDatabase{
-				Type:        "memfile",
-				Persist:     true,
-				Name:        "/var/lib/kea/kea-leases4.csv",
-				LFCInterval: 3600,
-			},
-			ValidLifetime: 4000,
-			OptionData:    k.globalOptionData4(),
-			Subnet4:       []keaSubnet4{},
-		},
-	}
-
 	byPrefix := map[string][]keaReservation4{}
 	for _, r := range reservations {
 		if !r.IP.Is4() {
@@ -374,59 +330,28 @@ func (k *KeaDHCPManager) buildDhcp4(reservations []keaReservation) ([]byte, erro
 		})
 	}
 
+	subnets := make([]keaSubnet4, 0, len(k.v4Prefixes))
 	for i, p := range k.v4Prefixes {
 		sub := keaSubnet4{
-			ID:     i + 1,
-			Subnet: p.Prefix.String(),
+			ID:         i + 1,
+			Subnet:     p.Prefix.String(),
+			OptionData: k.subnetOptionData4(p),
 		}
 		if p.HasRange {
 			sub.Pools = []keaPool{{
 				Pool: p.RangeStart.String() + " - " + p.RangeEnd.String(),
 			}}
 		}
-		if p.Gateway.IsValid() {
-			sub.OptionData = append(sub.OptionData, keaOptionData{
-				Name: "routers",
-				Data: p.Gateway.String(),
-			})
-		}
-		if p.SubnetMask != "" {
-			sub.OptionData = append(sub.OptionData, keaOptionData{
-				Name: "subnet-mask",
-				Data: p.SubnetMask,
-			})
-		}
-		if len(p.DNSServers) > 0 {
-			sub.OptionData = append(sub.OptionData, keaOptionData{
-				Name: "domain-name-servers",
-				Data: strings.Join(p.DNSServers, ", "),
-			})
-		}
 		if res := byPrefix[p.Prefix.String()]; len(res) > 0 {
 			sub.Reservations = res
 		}
-		cfg.Dhcp4.Subnet4 = append(cfg.Dhcp4.Subnet4, sub)
+		subnets = append(subnets, sub)
 	}
 
-	return json.MarshalIndent(cfg, "", "    ")
+	return json.MarshalIndent(subnets, "", "    ")
 }
 
 func (k *KeaDHCPManager) buildDhcp6(reservations []keaReservation) ([]byte, error) {
-	cfg := keaConfig6{
-		Dhcp6: keaDhcp6{
-			InterfacesConfig: keaInterfacesConfig{Interfaces: keaInterfaces(&k.P.Host.IPv6)},
-			LeaseDatabase: keaLeaseDatabase{
-				Type:        "memfile",
-				Persist:     true,
-				Name:        "/var/lib/kea/kea-leases6.csv",
-				LFCInterval: 3600,
-			},
-			ValidLifetime: 4000,
-			OptionData:    k.globalOptionData6(),
-			Subnet6:       []keaSubnet6{},
-		},
-	}
-
 	byPrefix := map[string][]keaReservation6{}
 	for _, r := range reservations {
 		if !r.IP.Is6() {
@@ -444,37 +369,49 @@ func (k *KeaDHCPManager) buildDhcp6(reservations []keaReservation) ([]byte, erro
 		})
 	}
 
+	subnets := make([]keaSubnet6, 0, len(k.v6Prefixes))
 	for i, p := range k.v6Prefixes {
 		sub := keaSubnet6{
-			ID:     i + 1,
-			Subnet: p.Prefix.String(),
+			ID:         i + 1,
+			Subnet:     p.Prefix.String(),
+			OptionData: k.subnetOptionData6(p),
 		}
 		if p.HasRange {
 			sub.Pools = []keaPool{{
 				Pool: p.RangeStart.String() + " - " + p.RangeEnd.String(),
 			}}
 		}
-		if len(p.DNSServers) > 0 {
-			sub.OptionData = append(sub.OptionData, keaOptionData{
-				Name: "dns-servers",
-				Data: strings.Join(p.DNSServers, ", "),
-			})
-		}
 		if res := byPrefix[p.Prefix.String()]; len(res) > 0 {
 			sub.Reservations = res
 		}
-		cfg.Dhcp6.Subnet6 = append(cfg.Dhcp6.Subnet6, sub)
+		subnets = append(subnets, sub)
 	}
 
-	return json.MarshalIndent(cfg, "", "    ")
+	return json.MarshalIndent(subnets, "", "    ")
 }
 
-func (k *KeaDHCPManager) globalOptionData4() []keaOptionData {
+func (k *KeaDHCPManager) subnetOptionData4(p *resolvedPrefix) []keaOptionData {
 	var opts []keaOptionData
-	if k.P.ConfigDHCP != nil && len(k.P.ConfigDHCP.DNSServers) > 0 {
+	if p.Gateway.IsValid() {
+		opts = append(opts, keaOptionData{
+			Name: "routers",
+			Data: p.Gateway.String(),
+		})
+	}
+	if p.SubnetMask != "" {
+		opts = append(opts, keaOptionData{
+			Name: "subnet-mask",
+			Data: p.SubnetMask,
+		})
+	}
+	dns := p.DNSServers
+	if len(dns) == 0 && k.P.ConfigDHCP != nil {
+		dns = k.P.ConfigDHCP.DNSServers
+	}
+	if len(dns) > 0 {
 		opts = append(opts, keaOptionData{
 			Name: "domain-name-servers",
-			Data: strings.Join(k.P.ConfigDHCP.DNSServers, ", "),
+			Data: strings.Join(dns, ", "),
 		})
 	}
 	if k.P.ConfigDHCP != nil && k.P.ConfigDHCP.DomainName != "" {
@@ -486,12 +423,16 @@ func (k *KeaDHCPManager) globalOptionData4() []keaOptionData {
 	return opts
 }
 
-func (k *KeaDHCPManager) globalOptionData6() []keaOptionData {
+func (k *KeaDHCPManager) subnetOptionData6(p *resolvedPrefix) []keaOptionData {
 	var opts []keaOptionData
-	if k.P.ConfigDHCP != nil && len(k.P.ConfigDHCP.DNSServers) > 0 {
+	dns := p.DNSServers
+	if len(dns) == 0 && k.P.ConfigDHCP != nil {
+		dns = k.P.ConfigDHCP.DNSServers
+	}
+	if len(dns) > 0 {
 		opts = append(opts, keaOptionData{
 			Name: "dns-servers",
-			Data: strings.Join(k.P.ConfigDHCP.DNSServers, ", "),
+			Data: strings.Join(dns, ", "),
 		})
 	}
 	if k.P.ConfigDHCP != nil && k.P.ConfigDHCP.DomainName != "" {
@@ -501,13 +442,6 @@ func (k *KeaDHCPManager) globalOptionData6() []keaOptionData {
 		})
 	}
 	return opts
-}
-
-func keaInterfaces(proto *ConfigDHCPtemplateProtocol) []string {
-	if proto == nil || len(proto.Interfaces) == 0 {
-		return []string{"*"}
-	}
-	return proto.Interfaces
 }
 
 func validateDHCPProtocol(name string, proto *ConfigDHCPtemplateProtocol) error {
@@ -536,7 +470,7 @@ func writeKeaFile(path, family string, body []byte) error {
 	}
 	defer file.Close()
 	fmt.Fprintf(file, "//------------------------------------------------------------\n")
-	fmt.Fprintf(file, "// ISC Kea %s configuration\n", family)
+	fmt.Fprintf(file, "// ISC Kea %s subnet include\n", family)
 	fmt.Fprintf(file, "// WARNING! do not edit, dnsmgr2 will overwrite your changes\n")
 	fmt.Fprintf(file, "//------------------------------------------------------------\n\n")
 	if _, err := file.Write(body); err != nil {
@@ -550,23 +484,69 @@ func writeKeaFile(path, family string, body []byte) error {
 	return nil
 }
 
-func keaCheckConfig(binary, filename string) error {
+func keaValidationStub(dhcpKey, subnetKey, includePath string) ([]byte, error) {
+	dhcpJSON, err := json.Marshal(dhcpKey)
+	if err != nil {
+		return nil, err
+	}
+	subnetJSON, err := json.Marshal(subnetKey)
+	if err != nil {
+		return nil, err
+	}
+	includeJSON, err := json.Marshal(includePath)
+	if err != nil {
+		return nil, err
+	}
+	lease := "/tmp/dnsmgr2-kea-leases4.csv"
+	if dhcpKey == "Dhcp6" {
+		lease = "/tmp/dnsmgr2-kea-leases6.csv"
+	}
+	leaseJSON, err := json.Marshal(lease)
+	if err != nil {
+		return nil, err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "{\n")
+	fmt.Fprintf(&b, "    %s: {\n", dhcpJSON)
+	fmt.Fprintf(&b, "        \"interfaces-config\": { \"interfaces\": [ \"*\" ] },\n")
+	fmt.Fprintf(&b, "        \"lease-database\": { \"type\": \"memfile\", \"name\": %s },\n", leaseJSON)
+	fmt.Fprintf(&b, "        \"valid-lifetime\": 4000,\n")
+	fmt.Fprintf(&b, "        %s: <?include %s?>\n", subnetJSON, includeJSON)
+	fmt.Fprintf(&b, "    }\n")
+	fmt.Fprintf(&b, "}\n")
+	return []byte(b.String()), nil
+}
+
+func keaCheckConfig(binary, includePath, dhcpKey, subnetKey string) error {
 	path, err := exec.LookPath(binary)
 	if err != nil {
 		slog.Warn("kea config check skipped; binary not on PATH, generated config not validated", "binary", binary)
 		return nil
 	}
-	cmd := exec.Command(path, "-t", filename)
+	absInclude, err := filepath.Abs(includePath)
+	if err != nil {
+		return err
+	}
+	stub, err := keaValidationStub(dhcpKey, subnetKey, absInclude)
+	if err != nil {
+		return err
+	}
+	stubPath := absInclude + ".check"
+	if err := os.WriteFile(stubPath, stub, 0o644); err != nil {
+		return err
+	}
+	defer os.Remove(stubPath)
+	cmd := exec.Command(path, "-t", stubPath)
 	out, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(out))
 	if err != nil {
 		if output != "" {
-			slog.Error(binary+" -t", "file", filename, "err", err, "output", output)
-			return fmt.Errorf("%s -t %s: %w\n%s", binary, filename, err, output)
+			slog.Error(binary+" -t", "file", stubPath, "err", err, "output", output)
+			return fmt.Errorf("%s -t %s: %w\n%s", binary, stubPath, err, output)
 		}
-		slog.Error(binary+" -t", "file", filename, "err", err)
-		return fmt.Errorf("%s -t %s: %w", binary, filename, err)
+		slog.Error(binary+" -t", "file", stubPath, "err", err)
+		return fmt.Errorf("%s -t %s: %w", binary, stubPath, err)
 	}
-	slog.Debug("kea config validation ok", "binary", binary, "file", filename)
+	slog.Debug("kea config validation ok", "binary", binary, "file", includePath)
 	return nil
 }

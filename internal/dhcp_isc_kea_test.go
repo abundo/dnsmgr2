@@ -14,11 +14,36 @@ func testKeaHost(dir string) *ConfigHostDHCPtemplate {
 		IPv4: ConfigDHCPtemplateProtocol{
 			Enable:      true,
 			Configdir:   dir,
-			IncludeFile: "kea-dhcp4.conf",
+			IncludeFile: "kea-dhcp4.dnsmgr2.json",
 			Tmpdir:      dir,
 			CmdRestart:  "true",
 		},
 	}
+}
+
+func readKeaJSONArray[T any](t *testing.T, path string) T {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	if !strings.Contains(text, "WARNING! do not edit") {
+		t.Error("missing overwrite warning")
+	}
+	if strings.Contains(text, `"Dhcp4"`) || strings.Contains(text, `"Dhcp6"`) ||
+		strings.Contains(text, "interfaces-config") || strings.Contains(text, "lease-database") {
+		t.Errorf("include file looks like a full Kea config:\n%s", text)
+	}
+	jsonStart := strings.Index(text, "[")
+	if jsonStart < 0 {
+		t.Fatalf("no JSON array in %s:\n%s", path, text)
+	}
+	var v T
+	if err := json.Unmarshal([]byte(text[jsonStart:]), &v); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, text)
+	}
+	return v
 }
 
 func TestKeaBuildDhcp4ReservationAndDefaults(t *testing.T) {
@@ -46,38 +71,11 @@ func TestKeaBuildDhcp4ReservationAndDefaults(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 
-	body, err := os.ReadFile(filepath.Join(dir, "kea-dhcp4.conf"))
-	if err != nil {
-		t.Fatal(err)
+	subnets := readKeaJSONArray[[]keaSubnet4](t, filepath.Join(dir, "kea-dhcp4.dnsmgr2.json"))
+	if len(subnets) != 1 {
+		t.Fatalf("subnets = %d", len(subnets))
 	}
-	text := string(body)
-	if !strings.Contains(text, "WARNING! do not edit") {
-		t.Error("missing overwrite warning")
-	}
-
-	jsonStart := strings.Index(text, "{")
-	if jsonStart < 0 {
-		t.Fatal("no JSON object in kea config")
-	}
-	var cfg keaConfig4
-	if err := json.Unmarshal([]byte(text[jsonStart:]), &cfg); err != nil {
-		t.Fatalf("unmarshal: %v\n%s", err, text)
-	}
-
-	if len(cfg.Dhcp4.OptionData) != 2 {
-		t.Fatalf("global options = %#v", cfg.Dhcp4.OptionData)
-	}
-	if cfg.Dhcp4.OptionData[0].Name != "domain-name-servers" || cfg.Dhcp4.OptionData[0].Data != "192.0.2.53, 192.0.2.54" {
-		t.Errorf("dns option = %#v", cfg.Dhcp4.OptionData[0])
-	}
-	if cfg.Dhcp4.OptionData[1].Name != "domain-name" || cfg.Dhcp4.OptionData[1].Data != "example.com" {
-		t.Errorf("domain option = %#v", cfg.Dhcp4.OptionData[1])
-	}
-
-	if len(cfg.Dhcp4.Subnet4) != 1 {
-		t.Fatalf("subnets = %d", len(cfg.Dhcp4.Subnet4))
-	}
-	sub := cfg.Dhcp4.Subnet4[0]
+	sub := subnets[0]
 	if sub.ID != 1 || sub.Subnet != "192.0.2.0/24" {
 		t.Errorf("subnet = %#v", sub)
 	}
@@ -94,38 +92,18 @@ func TestKeaBuildDhcp4ReservationAndDefaults(t *testing.T) {
 	if gotOpts["subnet-mask"] != "255.255.255.0" {
 		t.Errorf("subnet-mask = %q", gotOpts["subnet-mask"])
 	}
+	if gotOpts["domain-name-servers"] != "192.0.2.53, 192.0.2.54" {
+		t.Errorf("dns option = %q", gotOpts["domain-name-servers"])
+	}
+	if gotOpts["domain-name"] != "example.com" {
+		t.Errorf("domain option = %q", gotOpts["domain-name"])
+	}
 	if len(sub.Reservations) != 1 {
 		t.Fatalf("reservations = %#v", sub.Reservations)
 	}
 	res := sub.Reservations[0]
 	if res.HWAddress != "aa:bb:cc:dd:ee:ff" || res.IPAddress != "192.0.2.4" || res.Hostname != "test.example.com" {
 		t.Errorf("reservation = %#v", res)
-	}
-}
-
-func TestKeaCustomInterfaces(t *testing.T) {
-	dir := t.TempDir()
-	host := testKeaHost(dir)
-	host.IPv4.Interfaces = []string{"eth0"}
-	k := NewKeaDHCPManager(KeaDHCPManagerOpt{
-		ConfigDHCP: &ConfigDHCP{},
-		Host:       host,
-		Prefixes:   []ConfigPrefix{{Name: "192.0.2.0/24"}},
-	})
-	if err := k.Update(); err != nil {
-		t.Fatalf("Update: %v", err)
-	}
-	body, err := os.ReadFile(filepath.Join(dir, "kea-dhcp4.conf"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	jsonStart := strings.Index(string(body), "{")
-	var cfg keaConfig4
-	if err := json.Unmarshal([]byte(string(body)[jsonStart:]), &cfg); err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg.Dhcp4.InterfacesConfig.Interfaces) != 1 || cfg.Dhcp4.InterfacesConfig.Interfaces[0] != "eth0" {
-		t.Errorf("interfaces = %#v", cfg.Dhcp4.InterfacesConfig.Interfaces)
 	}
 }
 
@@ -144,21 +122,16 @@ func TestKeaPrefixDNSServersOverride(t *testing.T) {
 	if err := k.Update(); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	body, err := os.ReadFile(filepath.Join(dir, "kea-dhcp4.conf"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	jsonStart := strings.Index(string(body), "{")
-	var cfg keaConfig4
-	if err := json.Unmarshal([]byte(string(body)[jsonStart:]), &cfg); err != nil {
-		t.Fatal(err)
-	}
+	subnets := readKeaJSONArray[[]keaSubnet4](t, filepath.Join(dir, "kea-dhcp4.dnsmgr2.json"))
 	got := map[string]string{}
-	for _, o := range cfg.Dhcp4.Subnet4[0].OptionData {
+	for _, o := range subnets[0].OptionData {
 		got[o.Name] = o.Data
 	}
 	if got["domain-name-servers"] != "198.51.100.53" {
 		t.Errorf("prefix dns = %#v", got)
+	}
+	if got["domain-name"] != "example.com" {
+		t.Errorf("domain-name = %q", got["domain-name"])
 	}
 }
 
@@ -254,7 +227,7 @@ func TestKeaDhcp6Reservation(t *testing.T) {
 			IPv6: ConfigDHCPtemplateProtocol{
 				Enable:      true,
 				Configdir:   dir,
-				IncludeFile: "kea-dhcp6.conf",
+				IncludeFile: "kea-dhcp6.dnsmgr2.json",
 				Tmpdir:      dir,
 				CmdRestart:  "true",
 			},
@@ -267,25 +240,26 @@ func TestKeaDhcp6Reservation(t *testing.T) {
 	if err := k.Update(); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	body, err := os.ReadFile(filepath.Join(dir, "kea-dhcp6.conf"))
-	if err != nil {
-		t.Fatal(err)
+	subnets := readKeaJSONArray[[]keaSubnet6](t, filepath.Join(dir, "kea-dhcp6.dnsmgr2.json"))
+	if len(subnets) != 1 {
+		t.Fatalf("subnets = %d", len(subnets))
 	}
-	text := string(body)
-	jsonStart := strings.Index(text, "{")
-	var cfg keaConfig6
-	if err := json.Unmarshal([]byte(text[jsonStart:]), &cfg); err != nil {
-		t.Fatalf("unmarshal: %v\n%s", err, text)
-	}
-	if len(cfg.Dhcp6.Subnet6) != 1 {
-		t.Fatalf("subnets = %d", len(cfg.Dhcp6.Subnet6))
-	}
-	sub := cfg.Dhcp6.Subnet6[0]
+	sub := subnets[0]
 	if sub.Subnet != "2001:db8::/64" {
 		t.Errorf("subnet = %s", sub.Subnet)
 	}
 	if len(sub.Pools) != 1 || sub.Pools[0].Pool != "2001:db8::100 - 2001:db8::200" {
 		t.Errorf("pools = %#v", sub.Pools)
+	}
+	gotOpts := map[string]string{}
+	for _, o := range sub.OptionData {
+		gotOpts[o.Name] = o.Data
+	}
+	if gotOpts["dns-servers"] != "2001:db8::53" {
+		t.Errorf("dns-servers = %q", gotOpts["dns-servers"])
+	}
+	if gotOpts["domain-search"] != "example.com" {
+		t.Errorf("domain-search = %q", gotOpts["domain-search"])
 	}
 	if len(sub.Reservations) != 1 {
 		t.Fatalf("reservations = %#v", sub.Reservations)
@@ -311,7 +285,7 @@ func TestKeaSyncFromDnsManager(t *testing.T) {
 					IPv4: ConfigDHCPtemplateProtocol{
 						Enable:      true,
 						Configdir:   dir,
-						IncludeFile: "kea-dhcp4.conf",
+						IncludeFile: "kea-dhcp4.dnsmgr2.json",
 						Tmpdir:      dir,
 						CmdRestart:  "true",
 					},
@@ -338,8 +312,8 @@ func TestKeaSyncFromDnsManager(t *testing.T) {
 	if err := dm.Sync(); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "kea-dhcp4.conf")); err != nil {
-		t.Fatalf("kea config not written: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "kea-dhcp4.dnsmgr2.json")); err != nil {
+		t.Fatalf("kea include not written: %v", err)
 	}
 }
 
@@ -361,6 +335,57 @@ func TestKeaMACOnNonAddressRecord(t *testing.T) {
 	}
 }
 
+func TestKeaEmptyPrefixesWritesArray(t *testing.T) {
+	dir := t.TempDir()
+	k := NewKeaDHCPManager(KeaDHCPManagerOpt{
+		ConfigDHCP: &ConfigDHCP{},
+		Host:       testKeaHost(dir),
+	})
+	if err := k.Update(); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	subnets := readKeaJSONArray[[]keaSubnet4](t, filepath.Join(dir, "kea-dhcp4.dnsmgr2.json"))
+	if subnets == nil {
+		t.Fatal("subnets is JSON null, want []")
+	}
+	if len(subnets) != 0 {
+		t.Errorf("subnets = %#v, want empty", subnets)
+	}
+}
+
+func TestKeaValidationStub(t *testing.T) {
+	stub, err := keaValidationStub("Dhcp4", "subnet4", "/etc/kea/kea-dhcp4.dnsmgr2.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(stub)
+	for _, want := range []string{
+		`"Dhcp4"`,
+		`"subnet4": <?include "/etc/kea/kea-dhcp4.dnsmgr2.json"?>`,
+		`"interfaces-config"`,
+		`kea-leases4.csv`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("stub missing %q\n%s", want, text)
+		}
+	}
+
+	stub6, err := keaValidationStub("Dhcp6", "subnet6", `/tmp/path with "quote".json`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text6 := string(stub6)
+	if !strings.Contains(text6, `"Dhcp6"`) || !strings.Contains(text6, `"subnet6": <?include`) {
+		t.Errorf("v6 stub = %s", text6)
+	}
+	if !strings.Contains(text6, `kea-leases6.csv`) {
+		t.Errorf("v6 stub missing leases6:\n%s", text6)
+	}
+	if !strings.Contains(text6, `\u0022`) && !strings.Contains(text6, `\"`) {
+		t.Errorf("quoted path not escaped:\n%s", text6)
+	}
+}
+
 func TestExampleYAMLHasKeaConfig(t *testing.T) {
 	var cfg ConfigRoot
 	if err := ReadConfigFile("../examples/dnsmgr2-example.yaml", &cfg); err != nil {
@@ -375,6 +400,12 @@ func TestExampleYAMLHasKeaConfig(t *testing.T) {
 	host, ok := cfg.DHCP.HostTemplates["isc_kea"]
 	if !ok || host.Type != "isc_kea" || !host.IPv4.Enable {
 		t.Errorf("host template = %#v", host)
+	}
+	if host.IPv4.IncludeFile != "kea-dhcp4.dnsmgr2.json" {
+		t.Errorf("ipv4 includefile = %q", host.IPv4.IncludeFile)
+	}
+	if host.IPv6.IncludeFile != "kea-dhcp6.dnsmgr2.json" {
+		t.Errorf("ipv6 includefile = %q", host.IPv6.IncludeFile)
 	}
 	if len(cfg.Dnsmgr2) != 1 || cfg.Dnsmgr2[0].HostDhcpTemplate != "isc_kea" {
 		t.Errorf("dnsmgr2 = %#v", cfg.Dnsmgr2)

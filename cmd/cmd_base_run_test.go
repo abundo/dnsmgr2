@@ -146,7 +146,7 @@ dhcp:
       ipv4:
         enable: true
         configdir: /etc/kea
-        includefile: kea-dhcp4.conf
+        includefile: kea-dhcp4.dnsmgr2.json
         tmpdir: /tmp
         cmd_restart: "true"
 dnsmgr2:

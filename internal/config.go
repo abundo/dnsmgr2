@@ -31,11 +31,10 @@ type ConfigDestinations []ConfigDestination
 type ConfigDHCPtemplateProtocol struct {
 	Enable      bool
 	Configdir   string
-	IncludeFile string   `yaml:"includefile"`
+	IncludeFile string `yaml:"includefile"`
 	Tmpdir      string
-	Interfaces  []string `yaml:"interfaces" optional:"true"`
-	CmdRestart  string   `yaml:"cmd_restart"`
-	CmdStatus   string   `yaml:"cmd_status"`
+	CmdRestart  string `yaml:"cmd_restart"`
+	CmdStatus   string `yaml:"cmd_status"`
 }
 
 type ConfigHostDHCPtemplate struct {
