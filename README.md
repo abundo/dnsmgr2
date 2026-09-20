@@ -91,7 +91,11 @@ See `examples/dnsmgr2-example.yaml`. The main pieces:
   (`ipv4` / `ipv6`). `includefile` is a JSON array of subnets, included
   from the main Kea config; it is not the main config file.
 - `dnsmgr2` — which host templates to use, DHCP prefixes, and the zones
-  to manage (`forward`, `reverse4`, `reverse6`)
+  to manage (`forward`, `reverse4`, `reverse6`). Extra zone files are a
+  separate list item (`- include: /etc/dnsmgr2/zones.yaml` or
+  `- include: /etc/dnsmgr2/prefixes.yaml`, or a list of paths); see
+  `examples/zones-example.yaml` and `examples/prefixes-example.yaml`.
+  Relative paths are resolved from the main config file's directory.
 
 Each zone names a **zone** template (`dns_template`). That template names
 an SOA template.

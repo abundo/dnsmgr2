@@ -45,6 +45,10 @@ nfpms:
         dst: /usr/share/doc/dnsmgr2/records-example
       - src: examples/records-example.json
         dst: /usr/share/doc/dnsmgr2/records-example.json
+      - src: examples/zones-example.yaml
+        dst: /usr/share/doc/dnsmgr2/zones-example.yaml
+      - src: examples/prefixes-example.yaml
+        dst: /usr/share/doc/dnsmgr2/prefixes-example.yaml
       - dst: /etc/dnsmgr2
         type: dir
       - dst: /var/lib/dnsmgr2

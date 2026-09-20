@@ -1,0 +1,18 @@
+# Zone list included from dnsmgr2.yaml as a separate list item:
+#
+#   dnsmgr2:
+#     - host_dns_template: isc_bind_ubuntu
+#     - include: /etc/dnsmgr2/zones.yaml
+#
+# A YAML list of zones is also accepted (no "zones:" key).
+# Nested include: paths are allowed. Optional prefixes: are appended
+# onto the preceding dnsmgr2 item.
+
+zones:
+    - name: example.com
+      type: forward
+      dns_template: default_dns
+
+    - name: 192.0.2.0/24
+      type: reverse4
+      dns_template: default_dns

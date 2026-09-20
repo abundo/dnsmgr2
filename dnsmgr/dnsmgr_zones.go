@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"path/filepath"
+	"strings"
 )
 
 // ---------------------------------------------------------------------------
@@ -139,6 +140,13 @@ func (dm *DnsManager) AddReverseZone(hostDnsTemplate *ConfigDNS_HostTemplate, co
 
 // Go through configuration of zones, and create internal data structures
 func (dm *DnsManager) LoadZones() error {
+	baseDir := dm.C.ConfigDir
+	if strings.TrimSpace(baseDir) == "" {
+		baseDir = "."
+	}
+	if err := LoadZoneIncludes(&dm.C, baseDir); err != nil {
+		return err
+	}
 	for _, host := range dm.C.Dnsmgr2 {
 		if host.HostDnsTemplate == "" {
 			if len(host.Zones) > 0 {

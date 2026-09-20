@@ -56,6 +56,9 @@ func main() {
 				Short: "Show loaded configuration",
 				RunFuncE: func(p *cmdbase.Params, cmd *cobra.Command, args []string) error {
 					cmdbase.ApplyParams(p)
+					if err := dnsmgr.LoadZoneIncludes(&p.Config, p.Config.ConfigDir); err != nil {
+						return err
+					}
 					dnsmgr.Pprint(p)
 					return nil
 				},

@@ -104,3 +104,10 @@ dnsmgr2:
           - name: 2001:db8:1000::/64
             type: reverse6
             dns_template: default_dns
+
+    # Extra zone or prefix lists (written by factum2-dns, or any other
+    # source). A string or a list of paths. Loaded content is added to
+    # the preceding item.
+    # - include: /etc/dnsmgr2/zones.yaml
+    # - host_dhcp_template: isc_kea
+    # - include: /etc/dnsmgr2/prefixes.yaml

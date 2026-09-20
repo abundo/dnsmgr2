@@ -3,6 +3,8 @@ package cmdbase
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
 
@@ -12,6 +14,9 @@ import (
 // ApplyParams applies CLI logging flags. Call at the start of every command.
 func ApplyParams(p *Params) {
 	dnsmgr.SetupLogging(p.Debug, p.Loglevel)
+	if p != nil && strings.TrimSpace(p.ConfigFile) != "" {
+		p.Config.ConfigDir = filepath.Dir(p.ConfigFile)
+	}
 }
 
 type Params struct {

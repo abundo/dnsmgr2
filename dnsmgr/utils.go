@@ -50,6 +50,10 @@ func LoadConfigFile(filename string) (ConfigRoot, error) {
 	if err := ReadConfigFile(filename, &cfg); err != nil {
 		return ConfigRoot{}, err
 	}
+	cfg.ConfigDir = filepath.Dir(filename)
+	if err := LoadZoneIncludes(&cfg, cfg.ConfigDir); err != nil {
+		return ConfigRoot{}, err
+	}
 	return cfg, nil
 }
 

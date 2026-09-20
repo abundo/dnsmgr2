@@ -1,5 +1,7 @@
 package dnsmgr
 
+import "strings"
+
 // ---------------------------------------------------------------------------
 //   Source
 // ---------------------------------------------------------------------------
@@ -125,11 +127,39 @@ type ConfigZone struct {
 	DnsTemplate string `yaml:"dns_template"`
 }
 
+// IncludePaths is one path or a YAML list of paths.
+type IncludePaths []string
+
+func (p *IncludePaths) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var one string
+	if err := unmarshal(&one); err == nil {
+		one = strings.TrimSpace(one)
+		if one == "" {
+			*p = nil
+			return nil
+		}
+		*p = IncludePaths{one}
+		return nil
+	}
+	var many []string
+	if err := unmarshal(&many); err != nil {
+		return err
+	}
+	*p = many
+	return nil
+}
+
 type ConfigDataType struct {
 	HostDnsTemplate  string `yaml:"host_dns_template"`
 	HostDhcpTemplate string `yaml:"host_dhcp_template"`
-	Prefixes         []ConfigPrefix
-	Zones            []ConfigZone
+	// Include is a separate dnsmgr2 list item (not a field of
+	// host_dns_template). A string or a list of YAML files; loaded zones
+	// and prefixes are appended to the preceding list item. Paths are
+	// relative to the main config file's directory unless they are
+	// absolute.
+	Include  IncludePaths `yaml:"include,omitempty"`
+	Prefixes []ConfigPrefix
+	Zones    []ConfigZone
 }
 
 type ConfigDataGroups []ConfigDataType
@@ -142,4 +172,8 @@ type ConfigRoot struct {
 	DNS          ConfigDNS
 
 	Dnsmgr2 ConfigDataGroups
+
+	// ConfigDir is the directory of the main YAML file. Relative include
+	// paths are resolved against it. Not read from YAML.
+	ConfigDir string `yaml:"-" boa:"ignore"`
 }

@@ -1,0 +1,11 @@
+# Prefix list included from dnsmgr2.yaml as a separate list item:
+#
+#   dnsmgr2:
+#     - host_dhcp_template: isc_kea
+#     - include: /etc/dnsmgr2/prefixes.yaml
+
+prefixes:
+    - name: 192.0.2.0/24
+      range: 192.0.2.100-192.0.2.200
+      # gateway defaults to the first usable address (192.0.2.1)
+      # dns_servers: override dhcp.dns_servers for this subnet only
