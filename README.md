@@ -84,8 +84,8 @@ See `examples/dnsmgr2-example.yaml`. The main pieces:
 - `dns.host_templates` — BIND paths and reload/restart commands
 - `dns.soa_templates` — SOA values (`rname` is a domain-name, e.g.
   `support.example.com.`, not an email address)
-- `dns.zone_templates` — default TTL, NS records, and which SOA template
-  to use
+- `dns.zone_templates` — default TTL, NS records, which SOA template
+  to use, and an optional `dnssec_policy` name
 - `dhcp.domain_name` / `dhcp.dns_servers` — global DHCP options
 - `dhcp.host_templates` — Kea paths and restart/status commands
   (`ipv4` / `ipv6`). `includefile` is a JSON array of subnets, included
@@ -98,7 +98,11 @@ See `examples/dnsmgr2-example.yaml`. The main pieces:
   Relative paths are resolved from the main config file's directory.
 
 Each zone names a **zone** template (`dns_template`). That template names
-an SOA template.
+an SOA template. Optional `dnssec_policy` on the zone overrides the
+template. A zone include may also list `dnssec_policies`; those blocks
+are written at the top of the BIND include file (`dnssec-policy "…"`,
+then `inline-signing` on each zone that names a policy). BIND's built-in
+policy `default` is not emitted as a block.
 
 Each DHCP prefix is a CIDR (`name: 192.0.2.0/24`). Optional `range` is
 the dynamic pool (`192.0.2.100-192.0.2.200`). `gateway` defaults to the

@@ -7,11 +7,24 @@
 # A YAML list of zones is also accepted (no "zones:" key).
 # Nested include: paths are allowed. Optional prefixes: are appended
 # onto the preceding dnsmgr2 item.
+# Optional dnssec_policies are written into named.conf. Optional
+# dnssec_policy on a zone overrides the zone template.
+
+dnssec_policies:
+    - name: lab
+      ksk_lifetime: P1Y
+      ksk_algorithm: ecdsap256sha256
+      zsk_lifetime: 30d
+      zsk_algorithm: ecdsap256sha256
+      signatures_validity: 14d
+      signatures_validity_dnskey: 14d
+      signatures_refresh: 5d
 
 zones:
     - name: example.com
       type: forward
       dns_template: default_dns
+      dnssec_policy: lab
 
     - name: 192.0.2.0/24
       type: reverse4

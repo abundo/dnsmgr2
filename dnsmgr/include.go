@@ -14,9 +14,10 @@ import (
 // Either this mapping (zones: / prefixes: / include:) or a YAML list of
 // ConfigZone is accepted.
 type ConfigZoneInclude struct {
-	Zones    []ConfigZone   `yaml:"zones,omitempty"`
-	Prefixes []ConfigPrefix `yaml:"prefixes,omitempty"`
-	Include  IncludePaths   `yaml:"include,omitempty"`
+	Zones          []ConfigZone         `yaml:"zones,omitempty"`
+	Prefixes       []ConfigPrefix       `yaml:"prefixes,omitempty"`
+	DNSSECPolicies []ConfigDNSSECPolicy `yaml:"dnssec_policies,omitempty"`
+	Include        IncludePaths         `yaml:"include,omitempty"`
 }
 
 func (g ConfigDataType) includeOnly() bool {
@@ -51,6 +52,7 @@ func LoadZoneIncludes(cfg *ConfigRoot, baseDir string) error {
 			prev := &out[len(out)-1]
 			prev.Zones = append(prev.Zones, g.Zones...)
 			prev.Prefixes = append(prev.Prefixes, g.Prefixes...)
+			prev.DNSSECPolicies = append(prev.DNSSECPolicies, g.DNSSECPolicies...)
 			continue
 		}
 		out = append(out, g)
@@ -102,12 +104,13 @@ func loadZoneIncludeFile(group *ConfigDataType, path string, visited map[string]
 	if err != nil {
 		return fmt.Errorf("zone include %s: %w", path, err)
 	}
-	zones, prefixes, nested, err := parseZoneInclude(data)
+	zones, prefixes, policies, nested, err := parseZoneInclude(data)
 	if err != nil {
 		return fmt.Errorf("zone include %s: %w", path, err)
 	}
 	group.Zones = append(group.Zones, zones...)
 	group.Prefixes = append(group.Prefixes, prefixes...)
+	group.DNSSECPolicies = append(group.DNSSECPolicies, policies...)
 	for _, inc := range nested {
 		inc = strings.TrimSpace(inc)
 		if inc == "" {
@@ -121,26 +124,26 @@ func loadZoneIncludeFile(group *ConfigDataType, path string, visited map[string]
 	return nil
 }
 
-func parseZoneInclude(data []byte) ([]ConfigZone, []ConfigPrefix, []string, error) {
+func parseZoneInclude(data []byte) ([]ConfigZone, []ConfigPrefix, []ConfigDNSSECPolicy, []string, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil
 	}
 	var raw interface{}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	switch raw.(type) {
 	case []interface{}:
 		var list []ConfigZone
 		if err := yaml.Unmarshal(data, &list); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
-		return list, nil, nil, nil
+		return list, nil, nil, nil, nil
 	default:
 		var doc ConfigZoneInclude
 		if err := yaml.Unmarshal(data, &doc); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
-		return doc.Zones, doc.Prefixes, doc.Include, nil
+		return doc.Zones, doc.Prefixes, doc.DNSSECPolicies, doc.Include, nil
 	}
 }

@@ -286,7 +286,13 @@ func (dm *DnsManager) Sync() error {
 			break
 		}
 	}
+	var policies []ConfigDNSSECPolicy
 	if needsDNS {
+		var err error
+		policies, err = collectDNSSECPolicies(dm.C.Dnsmgr2)
+		if err != nil {
+			return err
+		}
 		db, err := ConnectMigrate(dm.C.Dbfile)
 		if err != nil {
 			return err
@@ -307,11 +313,12 @@ func (dm *DnsManager) Sync() error {
 			switch hostDnsTemplate.Type {
 			case "isc_bind":
 				d := NewISCBINDManager(DNSManagerOpt{
-					Dbfile:     dm.C.Dbfile,
-					DB:         dm.DB,
-					ConfigDNS:  &dm.C.DNS,
-					ConfigData: dm.C.Dnsmgr2,
-					Zones:      *dm.Zones,
+					Dbfile:         dm.C.Dbfile,
+					DB:             dm.DB,
+					ConfigDNS:      &dm.C.DNS,
+					ConfigData:     dm.C.Dnsmgr2,
+					Zones:          *dm.Zones,
+					DNSSECPolicies: policies,
 				})
 				err := d.PreUpdate()
 				if err != nil {

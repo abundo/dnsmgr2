@@ -18,11 +18,12 @@ import (
 )
 
 type DNSManagerOpt struct {
-	Dbfile     string
-	DB         *gorm.DB
-	ConfigDNS  *ConfigDNS
-	ConfigData ConfigDataGroups
-	Zones      ZonesType
+	Dbfile         string
+	DB             *gorm.DB
+	ConfigDNS      *ConfigDNS
+	ConfigData     ConfigDataGroups
+	Zones          ZonesType
+	DNSSECPolicies []ConfigDNSSECPolicy
 }
 
 type DNSManager struct {
@@ -110,6 +111,13 @@ func (dns *DNSManager) PreUpdate() error {
 		dnsTemplate, ok := dns.P.ConfigDNS.ZoneTemplates[confZone.DnsTemplate]
 		if !ok {
 			return errors.New("unknown DNS template: " + confZone.DnsTemplate)
+		}
+		if confZone.DNSSECpolicy != "" {
+			name, err := bindPolicyName(confZone.DNSSECpolicy)
+			if err != nil {
+				return fmt.Errorf("zone %s: %w", confZone.Name, err)
+			}
+			dnsTemplate.DNSSECpolicy = name
 		}
 		zone.DNS = &dnsTemplate
 
@@ -232,6 +240,9 @@ func (dns *DNSManager) Update(host *ConfigDNS_HostTemplate, newSerial bool) erro
 	fmt.Fprintf(includeFile, "// Zone definitions\n")
 	fmt.Fprintf(includeFile, "// WARNING! do not edit, dnsmgr2 will overwrite your changes\n")
 	fmt.Fprintf(includeFile, "//------------------------------------------------------------\n")
+	if err := writeDNSSECPolicies(includeFile, dns.P.DNSSECPolicies); err != nil {
+		return err
+	}
 
 	for _, zone := range dns.P.Zones {
 		rel := zoneFileRel(host, zone.Name)
@@ -249,7 +260,11 @@ func (dns *DNSManager) Update(host *ConfigDNS_HostTemplate, newSerial bool) erro
 		fmt.Fprintf(includeFile, "    type primary;\n")
 		fmt.Fprintf(includeFile, "    file \"%s\";\n", zone.DstFile)
 		if zone.DNS.DNSSECpolicy != "" {
-			fmt.Fprintf(includeFile, "    dnssec-policy \"%s\";\n", zone.DNS.DNSSECpolicy)
+			name, err := bindPolicyName(zone.DNS.DNSSECpolicy)
+			if err != nil {
+				return fmt.Errorf("zone %s: %w", zone.Name, err)
+			}
+			fmt.Fprintf(includeFile, "    dnssec-policy \"%s\";\n", name)
 			fmt.Fprintf(includeFile, "    inline-signing yes;\n")
 		}
 		if len(zone.DNS.ParentalAgents) > 0 {

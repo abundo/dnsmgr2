@@ -111,6 +111,20 @@ type ConfigDNS_ZoneTemplate struct {
 	ZoneOptions    []string `yaml:"zone_options"`
 }
 
+// ConfigDNSSECPolicy is a BIND dnssec-policy. factum2-dns writes these
+// into the zone include; the BIND driver emits the block in named.conf.
+type ConfigDNSSECPolicy struct {
+	Name                     string `yaml:"name"`
+	KSKLifetime              string `yaml:"ksk_lifetime"`
+	KSKAlgorithm             string `yaml:"ksk_algorithm"`
+	ZSKLifetime              string `yaml:"zsk_lifetime"`
+	ZSKAlgorithm             string `yaml:"zsk_algorithm"`
+	PurgeKeys                string `yaml:"purge_keys"`
+	SignaturesValidity       string `yaml:"signatures_validity"`
+	SignaturesValidityDNSKEY string `yaml:"signatures_validity_dnskey"`
+	SignaturesRefresh        string `yaml:"signatures_refresh"`
+}
+
 type ConfigDNS struct {
 	HostTemplates map[string]ConfigDNS_HostTemplate `yaml:"host_templates"`
 	SOATemplates  map[string]ConfigDNS_SOA_template `yaml:"soa_templates"`
@@ -122,9 +136,10 @@ type ConfigDNS struct {
 // ---------------------------------------------------------------------------
 
 type ConfigZone struct {
-	Name        string
-	Type        string // forward, reverse4, reverse6
-	DnsTemplate string `yaml:"dns_template"`
+	Name         string
+	Type         string // forward, reverse4, reverse6
+	DnsTemplate  string `yaml:"dns_template"`
+	DNSSECpolicy string `yaml:"dnssec_policy"`
 }
 
 // IncludePaths is one path or a YAML list of paths.
@@ -157,9 +172,10 @@ type ConfigDataType struct {
 	// and prefixes are appended to the preceding list item. Paths are
 	// relative to the main config file's directory unless they are
 	// absolute.
-	Include  IncludePaths `yaml:"include,omitempty"`
-	Prefixes []ConfigPrefix
-	Zones    []ConfigZone
+	Include        IncludePaths `yaml:"include,omitempty"`
+	Prefixes       []ConfigPrefix
+	Zones          []ConfigZone
+	DNSSECPolicies []ConfigDNSSECPolicy `yaml:"dnssec_policies,omitempty"`
 }
 
 type ConfigDataGroups []ConfigDataType

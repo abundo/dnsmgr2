@@ -149,3 +149,80 @@ func TestUpdateWritesValidAllowUpdateSyntax(t *testing.T) {
 		t.Fatalf("missing clauses: %s", text)
 	}
 }
+
+func TestUpdateWritesDNSSECPolicy(t *testing.T) {
+	if _, err := exec.LookPath("named-checkzone"); err != nil {
+		t.Skip("named-checkzone not installed")
+	}
+
+	dir := t.TempDir()
+	host := &ConfigDNS_HostTemplate{
+		Type:         "isc_bind",
+		Configdir:    dir,
+		IncludeFile:  "named.conf.dnsmgr2",
+		ZonesDir:     dir,
+		Tmpdir:       dir,
+		CmdReloadAll: "true",
+	}
+	zt := ConfigDNS_ZoneTemplate{
+		SOA:          "default_soa",
+		DefaultTTL:   "900",
+		NS:           []ConfigDNS_TemplateNS{{Name: "@", Type: "NS", Value: "ns1.example.net."}},
+		DNSSECpolicy: "from-template",
+	}
+	soa := ConfigDNS_SOA_template{
+		Mname: "ns1.example.net.", Rname: "hostmaster.example.net.",
+		SerialFormat: "date_serial", Refresh: 36000, Retry: 3600, Expire: 604800, Minimum: 900,
+	}
+	zone := &Zone{
+		Name: "example.com",
+		ConfigZone: &ConfigZone{
+			Name: "example.com", DnsTemplate: "default_dns", DNSSECpolicy: "lab",
+		},
+		Host:    host,
+		Records: RecordsType{{Name: "mail", Type: "A", Value: "192.0.2.10"}},
+	}
+	policies, err := normalizeDNSSECPolicies([]ConfigDNSSECPolicy{{
+		Name: "lab", KSKLifetime: "P1Y", KSKAlgorithm: "ecdsap256sha256",
+		ZSKLifetime: "30d", ZSKAlgorithm: "ecdsap256sha256",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dns := NewISCBINDManager(DNSManagerOpt{
+		Dbfile: filepath.Join(dir, "dnsmgr2.sqlite"),
+		ConfigDNS: &ConfigDNS{
+			ZoneTemplates: map[string]ConfigDNS_ZoneTemplate{"default_dns": zt},
+			SOATemplates:  map[string]ConfigDNS_SOA_template{"default_soa": soa},
+		},
+		Zones:          ZonesType{zone},
+		DNSSECPolicies: policies,
+	})
+	if err := dns.PreUpdate(); err != nil {
+		t.Fatal(err)
+	}
+	if zone.DNS.DNSSECpolicy != "lab" {
+		t.Fatalf("zone policy = %q, want lab (template override)", zone.DNS.DNSSECpolicy)
+	}
+	if err := dns.Update(host, false); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "named.conf.dnsmgr2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, want := range []string{
+		`dnssec-policy "lab" {`,
+		"ksk lifetime P1Y algorithm ecdsap256sha256;",
+		`dnssec-policy "lab";`,
+		"inline-signing yes;",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "from-template") {
+		t.Fatalf("template policy was not overridden:\n%s", text)
+	}
+}
