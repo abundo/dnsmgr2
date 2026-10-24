@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 type KeaDHCPManagerOpt struct {
@@ -154,7 +155,7 @@ func (k *KeaDHCPManager) Update() error {
 		if err := writeKeaFile(k.v4TmpFile, "DHCPv4", body); err != nil {
 			return err
 		}
-		if err := keaCheckConfig("kea-dhcp4", k.v4TmpFile, "Dhcp4", "subnet4"); err != nil {
+		if err := keaCheckConfig("kea-dhcp4", k.v4TmpFile, host.IPv4.Configdir, "Dhcp4", "subnet4"); err != nil {
 			return err
 		}
 	}
@@ -176,7 +177,7 @@ func (k *KeaDHCPManager) Update() error {
 		if err := writeKeaFile(k.v6TmpFile, "DHCPv6", body); err != nil {
 			return err
 		}
-		if err := keaCheckConfig("kea-dhcp6", k.v6TmpFile, "Dhcp6", "subnet6"); err != nil {
+		if err := keaCheckConfig("kea-dhcp6", k.v6TmpFile, host.IPv6.Configdir, "Dhcp6", "subnet6"); err != nil {
 			return err
 		}
 	}
@@ -509,7 +510,9 @@ func keaValidationStub(dhcpKey, subnetKey, includePath string) ([]byte, error) {
 	fmt.Fprintf(&b, "{\n")
 	fmt.Fprintf(&b, "    %s: {\n", dhcpJSON)
 	fmt.Fprintf(&b, "        \"interfaces-config\": { \"interfaces\": [ \"*\" ] },\n")
-	fmt.Fprintf(&b, "        \"lease-database\": { \"type\": \"memfile\", \"name\": %s },\n", leaseJSON)
+	// persist false so -t does not open a lease file. Packaged kea-dhcp4
+	// is AppArmor-confined and may not write an arbitrary path.
+	fmt.Fprintf(&b, "        \"lease-database\": { \"type\": \"memfile\", \"persist\": false, \"name\": %s },\n", leaseJSON)
 	fmt.Fprintf(&b, "        \"valid-lifetime\": 4000,\n")
 	fmt.Fprintf(&b, "        %s: <?include %s?>\n", subnetJSON, includeJSON)
 	fmt.Fprintf(&b, "    }\n")
@@ -517,36 +520,150 @@ func keaValidationStub(dhcpKey, subnetKey, includePath string) ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
-func keaCheckConfig(binary, includePath, dhcpKey, subnetKey string) error {
+func keaCheckConfig(binary, includePath, configDir, dhcpKey, subnetKey string) error {
 	path, err := exec.LookPath(binary)
 	if err != nil {
 		slog.Warn("kea config check skipped; binary not on PATH, generated config not validated", "binary", binary)
 		return nil
 	}
-	absInclude, err := filepath.Abs(includePath)
+	stubPath, cleanup, err := prepareKeaSyntaxCheck(configDir, includePath, dhcpKey, subnetKey)
 	if err != nil {
 		return err
 	}
-	stub, err := keaValidationStub(dhcpKey, subnetKey, absInclude)
-	if err != nil {
-		return err
-	}
-	stubPath := absInclude + ".check"
-	if err := os.WriteFile(stubPath, stub, 0o644); err != nil {
-		return err
-	}
-	defer os.Remove(stubPath)
+	defer cleanup()
+
 	cmd := exec.Command(path, "-t", stubPath)
+	cred, err := keaSyntaxCheckCredential(configDir)
+	if err != nil {
+		return err
+	}
+	if cred != nil {
+		slog.Debug("kea config check running as configdir owner", "binary", binary, "uid", cred.Uid, "gid", cred.Gid)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: cred}
+	}
 	out, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(out))
 	if err != nil {
 		if output != "" {
 			slog.Error(binary+" -t", "file", stubPath, "err", err, "output", output)
-			return fmt.Errorf("%s -t %s: %w\n%s", binary, stubPath, err, output)
+			msg := fmt.Sprintf("%s -t %s: %v\n%s", binary, stubPath, err, output)
+			if strings.Contains(output, "Unable to open file") {
+				msg += "\nKea could not read the check file. Debian and Ubuntu AppArmor only allow kea-dhcp4/kea-dhcp6 to read /etc/kea, and that directory is often mode 0750 owned by _kea."
+			}
+			return errors.New(msg)
 		}
 		slog.Error(binary+" -t", "file", stubPath, "err", err)
 		return fmt.Errorf("%s -t %s: %w", binary, stubPath, err)
 	}
 	slog.Debug("kea config validation ok", "binary", binary, "file", includePath)
 	return nil
+}
+
+// prepareKeaSyntaxCheck copies the generated include into configDir and
+// writes a stub next to it. Packaged Kea is confined to /etc/kea, so a
+// stub under tmpdir (often /var/lib/dnsmgr2) fails -t with "Unable to
+// open file" even when the file exists and is mode 0644.
+func prepareKeaSyntaxCheck(configDir, includePath, dhcpKey, subnetKey string) (stubPath string, cleanup func(), err error) {
+	cleanup = func() {}
+	absInclude, err := filepath.Abs(includePath)
+	if err != nil {
+		return "", cleanup, err
+	}
+	base := filepath.Base(absInclude)
+	includeCopy := filepath.Join(configDir, "dnsmgr2-syntax-"+base)
+	stubPath = filepath.Join(configDir, "dnsmgr2-syntax-"+base+".conf")
+
+	body, err := os.ReadFile(absInclude)
+	if err != nil {
+		return "", cleanup, err
+	}
+	var written []string
+	cleanup = func() {
+		for _, p := range written {
+			os.Remove(p)
+		}
+	}
+	if err := writeKeaCheckFile(includeCopy, body); err != nil {
+		return "", cleanup, err
+	}
+	written = append(written, includeCopy)
+
+	absCopy, err := filepath.Abs(includeCopy)
+	if err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	stub, err := keaValidationStub(dhcpKey, subnetKey, absCopy)
+	if err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	if err := writeKeaCheckFile(stubPath, stub); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	written = append(written, stubPath)
+	return stubPath, cleanup, nil
+}
+
+func writeKeaCheckFile(path string, body []byte) error {
+	// WriteFile applies umask. chmod afterwards so _kea can read the
+	// file when root's umask is 0077 and /etc/kea is mode 0750.
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o644)
+}
+
+// keaSyntaxCheckCredential returns a credential for the config directory
+// owner when the current user cannot search it. Debian's /etc/kea is
+// mode 0750 and owned by _kea. kea-dhcp4's AppArmor profile denies
+// dac_override, so root cannot open files there.
+func keaSyntaxCheckCredential(dir string) (*syscall.Credential, error) {
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return nil, err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil, nil
+	}
+	groups, err := os.Getgroups()
+	if err != nil {
+		return nil, err
+	}
+	gids := make([]uint32, len(groups))
+	for i, g := range groups {
+		gids[i] = uint32(g)
+	}
+	cred, err := keaSyntaxCredential(st.Uid, st.Gid, fi.Mode().Perm(), uint32(os.Geteuid()), uint32(os.Getegid()), gids)
+	if err != nil {
+		return nil, fmt.Errorf("DHCP configdir %s: %w", dir, err)
+	}
+	return cred, nil
+}
+
+func keaSyntaxCredential(uid, gid uint32, perm os.FileMode, euid, egid uint32, groups []uint32) (*syscall.Credential, error) {
+	if perm&0o001 != 0 {
+		return nil, nil
+	}
+	if uid == euid && perm&0o100 != 0 {
+		return nil, nil
+	}
+	if perm&0o010 != 0 && (gid == egid || containsUint32(groups, gid)) {
+		return nil, nil
+	}
+	if perm&0o100 == 0 {
+		return nil, errors.New("config directory is not searchable by its owner")
+	}
+	return &syscall.Credential{Uid: uid, Gid: gid, Groups: []uint32{}}, nil
+}
+
+func containsUint32(xs []uint32, v uint32) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }

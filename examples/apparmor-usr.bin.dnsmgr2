@@ -1,0 +1,76 @@
+# AppArmor profile for /usr/bin/dnsmgr2 on Debian and Ubuntu.
+#
+# Matches examples/dnsmgr2-example.yaml:
+#   config and records  /etc/dnsmgr2/
+#   sqlite, lock, temps /var/lib/dnsmgr2/
+#   BIND include        /etc/bind/named.conf.dnsmgr2
+#   zone files          /var/lib/bind/
+#   Kea subnet include  /etc/kea/kea-dhcp{4,6}.dnsmgr2.json
+#
+# sync runs as root and may setuid to the /etc/kea owner (usually _kea)
+# before exec of kea-dhcp4 -t / kea-dhcp6 -t. Those binaries must keep
+# their own profiles (PUx). rndc, named-checkzone, sudo, and systemctl
+# are the only other commands the example config runs.
+#
+# If includefile, zonesdir, or configdir differ from the paths above,
+# add matching rules before loading this in enforce mode.
+#
+# Install and load:
+#   sudo install -m 644 examples/apparmor-usr.bin.dnsmgr2 /etc/apparmor.d/usr.bin.dnsmgr2
+#   sudo apparmor_parser -r /etc/apparmor.d/usr.bin.dnsmgr2
+# Try complain mode first if you changed paths:
+#   sudo aa-complain /etc/apparmor.d/usr.bin.dnsmgr2
+
+#include <tunables/global>
+
+/usr/bin/dnsmgr2 flags=(attach_disconnected) {
+  #include <abstractions/base>
+
+  # Confined root does not keep these unless the profile grants them.
+  # dac_* : write /etc/kea when it is mode 0750 and not owned by root
+  # setuid/setgid : run kea-dhcp* -t as the configdir owner
+  # fowner : chmod the syntax-check files to 0644 after a restrictive umask
+  capability dac_override,
+  capability dac_read_search,
+  capability setuid,
+  capability setgid,
+  capability fowner,
+
+  /usr/bin/dnsmgr2 mr,
+
+  # Operator config, records, and zone/prefix includes.
+  /etc/dnsmgr2/ r,
+  /etc/dnsmgr2/** r,
+
+  # sqlite (including -wal/-shm/-journal), dnsmgr2.sqlite.lock, and
+  # temp zone files / named include before they are installed.
+  /var/lib/dnsmgr2/ rw,
+  /var/lib/dnsmgr2/** rwk,
+
+  # BIND. CopyFile stages .dnsmgr2-* in the destination directory.
+  /etc/bind/ r,
+  /etc/bind/named.conf.dnsmgr2 rw,
+  /etc/bind/.dnsmgr2-* rw,
+  /var/lib/bind/ rw,
+  /var/lib/bind/** rwk,
+
+  # Kea include plus dnsmgr2-syntax-* stubs removed after -t.
+  /etc/kea/ rw,
+  /etc/kea/** rwk,
+
+  # LookPath walks PATH (/usr/local, /usr, /).
+  /usr/local/sbin/ r,
+  /usr/local/bin/ r,
+  /{usr/,}sbin/ r,
+  /{usr/,}bin/ r,
+
+  # Helpers. PUx: use the target profile when one is installed
+  # (kea-dhcp4 / kea-dhcp6 on Debian and Ubuntu), otherwise unconfined.
+  # Uppercase P scrubs LD_* and similar. The command string is not a shell.
+  /{usr/,}bin/sudo PUx,
+  /{usr/,}bin/systemctl PUx,
+  /{usr/,}{bin,sbin}/rndc PUx,
+  /{usr/,}{bin,sbin}/named-checkzone PUx,
+  /{usr/,}{bin,sbin}/kea-dhcp4 PUx,
+  /{usr/,}{bin,sbin}/kea-dhcp6 PUx,
+}

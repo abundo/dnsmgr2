@@ -14,7 +14,11 @@ and restarts Kea when that file changes.
 Requires BIND's `named-checkzone` on `PATH` (Debian/Ubuntu: `bind9-utils`).
 If DHCP is enabled and `kea-dhcp4` / `kea-dhcp6` are on `PATH`, `sync`
 also runs `kea-dhcp4 -t` / `kea-dhcp6 -t` on a stub config that includes
-the generated subnet file.
+the generated subnet file. The stub is written in the Kea `configdir`
+(typically `/etc/kea`) and removed after the check. Packaged Kea on
+Debian and Ubuntu may only read that directory, and it is often mode
+`0750` owned by `_kea`, so the check runs as the directory owner when
+the current user cannot search it.
 `sync` writes under `/etc/bind`, `/var/lib/bind`, and (when DHCP is
 configured) `/etc/kea`, so run it as root.
 

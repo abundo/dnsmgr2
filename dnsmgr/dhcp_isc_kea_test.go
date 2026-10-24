@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -364,6 +365,7 @@ func TestKeaValidationStub(t *testing.T) {
 		`"subnet4": <?include "/etc/kea/kea-dhcp4.dnsmgr2.json"?>`,
 		`"interfaces-config"`,
 		`kea-leases4.csv`,
+		`"persist": false`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("stub missing %q\n%s", want, text)
@@ -380,6 +382,9 @@ func TestKeaValidationStub(t *testing.T) {
 	}
 	if !strings.Contains(text6, `kea-leases6.csv`) {
 		t.Errorf("v6 stub missing leases6:\n%s", text6)
+	}
+	if !strings.Contains(text6, `"persist": false`) {
+		t.Errorf("v6 stub missing persist false:\n%s", text6)
 	}
 	if !strings.Contains(text6, `\u0022`) && !strings.Contains(text6, `\"`) {
 		t.Errorf("quoted path not escaped:\n%s", text6)
@@ -414,6 +419,107 @@ func TestExampleYAMLHasKeaConfig(t *testing.T) {
 		t.Errorf("prefixes = %#v", cfg.Dnsmgr2[0].Prefixes)
 	}
 }
+
+func TestPrepareKeaSyntaxCheckUsesConfigDir(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := t.TempDir()
+	include := filepath.Join(tmp, "kea-dhcp4.dnsmgr2.json")
+	if err := os.WriteFile(include, []byte("[]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := syscall.Umask(0o077)
+	defer syscall.Umask(old)
+
+	stubPath, cleanup, err := prepareKeaSyntaxCheck(cfg, include, "Dhcp4", "subnet4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	if filepath.Dir(stubPath) != cfg {
+		t.Fatalf("stub dir = %q, want %q", filepath.Dir(stubPath), cfg)
+	}
+	if _, err := os.Stat(include + ".check"); !os.IsNotExist(err) {
+		t.Fatalf("stub beside tmp include: %v", err)
+	}
+	for _, p := range []string{stubPath, filepath.Join(cfg, "dnsmgr2-syntax-kea-dhcp4.dnsmgr2.json")} {
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm() != 0o644 {
+			t.Errorf("%s mode = %o, want 644", p, fi.Mode().Perm())
+		}
+	}
+	body, err := os.ReadFile(stubPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `<?include "` + filepath.Join(cfg, "dnsmgr2-syntax-kea-dhcp4.dnsmgr2.json") + `"`
+	if !strings.Contains(string(body), want) {
+		t.Errorf("stub = %s\nwant include %s", body, want)
+	}
+	abs, err := filepath.Abs(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), abs) {
+		t.Errorf("stub include is not absolute:\n%s", body)
+	}
+}
+
+func TestKeaSyntaxCredential(t *testing.T) {
+	const (
+		owner = 42
+		group = 43
+		root  = 0
+	)
+	groups := []uint32{7, group}
+	cases := []struct {
+		name    string
+		perm    os.FileMode
+		euid    uint32
+		egid    uint32
+		groups  []uint32
+		wantUID *uint32
+		wantErr bool
+	}{
+		{name: "world searchable", perm: 0o755, euid: root, egid: root},
+		{name: "owner", perm: 0o750, euid: owner, egid: root},
+		{name: "egid", perm: 0o750, euid: root, egid: group},
+		{name: "supplementary group", perm: 0o750, euid: root, egid: root, groups: groups},
+		{name: "drop to owner", perm: 0o750, euid: root, egid: root, wantUID: uint32Ptr(owner)},
+		{name: "nobody can search", perm: 0o000, euid: root, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cred, err := keaSyntaxCredential(owner, group, tc.perm, tc.euid, tc.egid, tc.groups)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantUID == nil {
+				if cred != nil {
+					t.Fatalf("cred = %+v, want nil", cred)
+				}
+				return
+			}
+			if cred == nil || cred.Uid != *tc.wantUID || cred.Gid != group {
+				t.Fatalf("cred = %+v, want uid %d gid %d", cred, *tc.wantUID, group)
+			}
+			if cred.Groups == nil || len(cred.Groups) != 0 {
+				t.Fatalf("groups = %#v, want empty", cred.Groups)
+			}
+		})
+	}
+}
+
+func uint32Ptr(v uint32) *uint32 { return &v }
 
 func TestLoadZonesUnknownDHCPTemplate(t *testing.T) {
 	dm, err := NewDnsManager(ConfigRoot{
