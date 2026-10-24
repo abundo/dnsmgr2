@@ -24,6 +24,7 @@ configured) `/etc/kea`, so run it as root.
 
 Pre-built Linux binaries and `.deb` packages are on the
 [GitHub Releases](https://github.com/abundo/dnsmgr2/releases) page.
+Release notes are in [CHANGELOG.md](CHANGELOG.md).
 
 From source, requires Go 1.25 and `make`:
 

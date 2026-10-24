@@ -1,50 +1,55 @@
 name: release
 
 on:
-    push:
-        tags:
-            - "v*"
+  push:
+    tags:
+      - "v*"
 
 permissions:
-    contents: write
+  contents: write
 
 jobs:
-    test:
-        runs-on: ubuntu-latest
-        steps:
-            - name: Checkout
-              uses: actions/checkout@v7
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
 
-            - name: Set up Go
-              uses: actions/setup-go@v7
-              with:
-                  go-version-file: go.mod
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
 
-            - name: Vet
-              run: go vet ./...
+      - name: Vet
+        run: go vet ./...
 
-            - name: Test
-              run: go test ./...
+      - name: Test
+        run: go test ./...
 
-    goreleaser:
-        needs: test
-        runs-on: ubuntu-latest
-        steps:
-            - name: Checkout
-              uses: actions/checkout@v7
-              with:
-                  fetch-depth: 0
+  goreleaser:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
-            - name: Set up Go
-              uses: actions/setup-go@v7
-              with:
-                  go-version-file: go.mod
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
 
-            - name: Run GoReleaser
-              uses: goreleaser/goreleaser-action@v7
-              with:
-                  distribution: goreleaser
-                  version: "~> v2"
-                  args: release --clean
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The release notes are the tag's section of CHANGELOG.md; a tag
+      # without one fails here, before anything is published.
+      - name: Release notes
+        run: dev/release-notes.sh "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean --release-notes ${{ runner.temp }}/notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

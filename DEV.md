@@ -33,6 +33,10 @@ Releases are built with [GoReleaser](https://goreleaser.com/) (pure Go,
 `CGO_ENABLED=0`) and published to GitHub when a `v*` tag is pushed
 (`.github/workflows/release.yml`). Tests must pass first.
 
+Write the release's section in `CHANGELOG.md` before tagging (`## vX.Y.Z`:
+New, Changed, Fixed, Upgrading). The notes on GitHub are that section
+(`dev/release-notes.sh`), and the release workflow fails without one.
+
     git tag -a v0.1.0 -m "v0.1.0"
     git push origin v0.1.0
 
