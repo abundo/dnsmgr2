@@ -49,6 +49,11 @@ nfpms:
         dst: /usr/share/doc/dnsmgr2/zones-example.yaml
       - src: examples/prefixes-example.yaml
         dst: /usr/share/doc/dnsmgr2/prefixes-example.yaml
+      - src: examples/apparmor-usr.bin.dnsmgr2
+        dst: /etc/apparmor.d/usr.bin.dnsmgr2
+        type: config
+        file_info:
+          mode: 0644
       - dst: /etc/dnsmgr2
         type: dir
       - dst: /var/lib/dnsmgr2
