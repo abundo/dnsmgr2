@@ -15,18 +15,6 @@ type ConfigSource struct {
 type ConfigSources []ConfigSource
 
 // ---------------------------------------------------------------------------
-//   Destination
-// ---------------------------------------------------------------------------
-
-// ConfigDestination is accepted in YAML for compatibility and ignored.
-// Drivers are selected by host_dns_template / host_dhcp_template.
-type ConfigDestination struct {
-	Type string
-	Name string
-}
-type ConfigDestinations []ConfigDestination
-
-// ---------------------------------------------------------------------------
 //   DHCP
 // ---------------------------------------------------------------------------
 
@@ -181,11 +169,10 @@ type ConfigDataType struct {
 type ConfigDataGroups []ConfigDataType
 
 type ConfigRoot struct {
-	Dbfile       string `yaml:"dbfile"`
-	Sources      ConfigSources
-	Destinations ConfigDestinations
-	DHCP         ConfigDHCP
-	DNS          ConfigDNS
+	Dbfile  string `yaml:"dbfile"`
+	Sources ConfigSources
+	DHCP    ConfigDHCP
+	DNS     ConfigDNS
 
 	Dnsmgr2 ConfigDataGroups
 

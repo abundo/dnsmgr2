@@ -135,9 +135,6 @@ dbfile: /tmp/dnsmgr2.sqlite
 sources:
   - type: json
     name: /tmp/records
-destinations:
-  - type: dhcp_isc_kea
-    name: isc_kea
 dhcp:
   domain_name: lab.example
   host_templates:
@@ -195,9 +192,6 @@ dbfile: /tmp/dnsmgr2.sqlite
 sources:
   - type: json
     name: /tmp/records
-destinations:
-  - type: dns_isc_bind
-    name: isc_bind
 dns:
   host_templates:
     isc_bind:
